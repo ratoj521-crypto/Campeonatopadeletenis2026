@@ -82,10 +82,12 @@ create table if not exists profiles (
 );
 
 -- ---------- ROW LEVEL SECURITY ----------
--- A app usa a anon key diretamente no browser (sem backend próprio),
--- por isso as tabelas de dados do campeonato ficam com leitura/escrita
--- públicas. Isto é aceitável para um evento fechado, mas qualquer pessoa
--- com a anon key consegue escrever nestas tabelas.
+-- A app usa a anon key diretamente no browser (sem backend próprio). Os
+-- atletas não têm sessão real do Supabase Auth (login próprio via RPC),
+-- por isso inserts/updates em players/messages/inscriptions continuam
+-- públicos (é como eles conseguem inscrever-se e falar no chat). Operações
+-- destrutivas ou sensíveis (apagar registos, escrever resultados de jogos)
+-- passam a exigir sessão de admin (ver is_admin() abaixo).
 
 alter table players enable row level security;
 alter table matches enable row level security;
@@ -94,41 +96,75 @@ alter table inscriptions enable row level security;
 alter table playoffs enable row level security;
 alter table profiles enable row level security;
 
+-- profiles: qualquer utilizador autenticado só lê o seu próprio perfil
+drop policy if exists "read own profile" on profiles;
+create policy "read own profile" on profiles for select using (auth.uid() = id);
+
+-- Helper: true se quem está a fazer o pedido está autenticado (supabase.auth)
+-- como admin. Não precisa de "security definer" porque a policy "read own
+-- profile" acima já deixa um utilizador autenticado ler a sua própria linha;
+-- para um visitante sem sessão, auth.uid() é null e a condição nunca bate certo.
+create or replace function is_admin()
+returns boolean
+language sql
+stable
+set search_path = public
+as $$
+  select exists (select 1 from profiles where id = auth.uid() and role = 'admin');
+$$;
+
+grant execute on function is_admin() to anon, authenticated;
+
+-- players: leitura, criação e atualização continuam públicas (o admin cria
+-- atletas e os próprios atletas movem-se de categoria ao inscrever-se, sem
+-- sessão real do Supabase Auth). Apagar um atleta passa a exigir admin.
 drop policy if exists "public read players" on players;
 drop policy if exists "public write players" on players;
 drop policy if exists "public update players" on players;
 drop policy if exists "public delete players" on players;
+drop policy if exists "admin delete players" on players;
 create policy "public read players" on players for select using (true);
 create policy "public write players" on players for insert with check (true);
 create policy "public update players" on players for update using (true);
-create policy "public delete players" on players for delete using (true);
+create policy "admin delete players" on players for delete using (is_admin());
 
+-- matches: leitura pública (todos veem resultados), mas escrever/editar/apagar
+-- resultados passa a exigir admin (já era 100% admin-only na interface).
 drop policy if exists "public read matches" on matches;
 drop policy if exists "public write matches" on matches;
 drop policy if exists "public update matches" on matches;
 drop policy if exists "public delete matches" on matches;
+drop policy if exists "admin write matches" on matches;
+drop policy if exists "admin update matches" on matches;
+drop policy if exists "admin delete matches" on matches;
 create policy "public read matches" on matches for select using (true);
-create policy "public write matches" on matches for insert with check (true);
-create policy "public update matches" on matches for update using (true);
-create policy "public delete matches" on matches for delete using (true);
+create policy "admin write matches" on matches for insert with check (is_admin());
+create policy "admin update matches" on matches for update using (is_admin());
+create policy "admin delete matches" on matches for delete using (is_admin());
 
+-- messages: continuam com escrita pública (chat/reagendamentos dos atletas,
+-- sem sessão real do Supabase Auth). Apagar mensagens passa a exigir admin.
 drop policy if exists "public read messages" on messages;
 drop policy if exists "public write messages" on messages;
 drop policy if exists "public update messages" on messages;
 drop policy if exists "public delete messages" on messages;
+drop policy if exists "admin delete messages" on messages;
 create policy "public read messages" on messages for select using (true);
 create policy "public write messages" on messages for insert with check (true);
 create policy "public update messages" on messages for update using (true);
-create policy "public delete messages" on messages for delete using (true);
+create policy "admin delete messages" on messages for delete using (is_admin());
 
+-- inscriptions: continuam com escrita pública (inscrição feita pelo próprio
+-- atleta ou pelo admin). Apagar inscrições passa a exigir admin.
 drop policy if exists "public read inscriptions" on inscriptions;
 drop policy if exists "public write inscriptions" on inscriptions;
 drop policy if exists "public update inscriptions" on inscriptions;
 drop policy if exists "public delete inscriptions" on inscriptions;
+drop policy if exists "admin delete inscriptions" on inscriptions;
 create policy "public read inscriptions" on inscriptions for select using (true);
 create policy "public write inscriptions" on inscriptions for insert with check (true);
 create policy "public update inscriptions" on inscriptions for update using (true);
-create policy "public delete inscriptions" on inscriptions for delete using (true);
+create policy "admin delete inscriptions" on inscriptions for delete using (is_admin());
 
 drop policy if exists "public read playoffs" on playoffs;
 drop policy if exists "public write playoffs" on playoffs;
@@ -136,10 +172,6 @@ drop policy if exists "public update playoffs" on playoffs;
 create policy "public read playoffs" on playoffs for select using (true);
 create policy "public write playoffs" on playoffs for insert with check (true);
 create policy "public update playoffs" on playoffs for update using (true);
-
--- profiles: qualquer utilizador autenticado só lê o seu próprio perfil
-drop policy if exists "read own profile" on profiles;
-create policy "read own profile" on profiles for select using (auth.uid() = id);
 
 -- ---------- CREDENCIAIS DOS ATLETAS (email + password) ----------
 -- Cada atleta passa a ter um email gerado (nome.sobrenome@emtp.com, com
