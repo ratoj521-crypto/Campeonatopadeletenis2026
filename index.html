@@ -4,12 +4,13 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EMTP 2026 - Escola Municipal de Ténis e Padel de Oliveira do Bairro</title>
+    <title>EMTP - Escola Municipal de Ténis e Padel de Oliveira do Bairro</title>
     <link rel="icon"
       href="https://image.qwenlm.ai/public_source/6e39fa4b-aff8-48f2-96e9-97740c436264/16780e44e-f071-4e64-8673-649738223400.png"
       type="image/png">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/fontsource/fonts/inter@latest/latin-400-normal.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/fontsource/fonts/inter@latest/latin-700-normal.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/fontsource/fonts/inter@latest/latin-800-normal.css">
@@ -347,7 +348,7 @@
         alt="EMTP" class="h-24 mb-4 trophy-animation">
       <div class="spinner mb-4"></div>
       <div class="text-gray-700 font-bold">A ligar ao campeonato...</div>
-      <div class="text-sm text-gray-500 mt-2">EMTP 2026 • Oliveira do Bairro</div>
+      <div class="text-sm text-gray-500 mt-2">EMTP • Oliveira do Bairro</div>
     </div>
 
     <!-- SYNC INDICATOR -->
@@ -363,7 +364,7 @@
           <img
             src="https://image.qwenlm.ai/public_source/6e39fa4b-aff8-48f2-96e9-97740c436264/16780e44e-f071-4e64-8673-649738223400.png"
             alt="EMTP" class="h-28 mx-auto mb-4 drop-shadow-2xl trophy-animation">
-          <h1 class="text-3xl md:text-4xl font-extrabold tracking-tight mb-1">EMTP 2026</h1>
+          <h1 class="text-3xl md:text-4xl font-extrabold tracking-tight mb-1">EMTP</h1>
           <p class="text-sm text-white/90 font-semibold">Escola Municipal de Ténis e Padel</p>
           <p class="text-xs text-white/70">Oliveira do Bairro • Dados partilhados em tempo real</p>
         </div>
@@ -445,9 +446,6 @@
             <button onclick="app.closeAdminLogin()"
               class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
           </div>
-          <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-xs text-blue-900">
-            ℹ️ Usa a conta de administrador criada no Supabase.
-          </div>
           <div class="space-y-4">
             <div>
               <label class="block text-sm font-semibold text-gray-700 mb-1">Email</label>
@@ -457,9 +455,12 @@
             </div>
             <div>
               <label class="block text-sm font-semibold text-gray-700 mb-1">Password</label>
-              <input id="adminPassword" type="password"
-                class="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-400 outline-none"
-                placeholder="••••••••">
+              <div class="relative">
+                <input id="adminPassword" type="password"
+                  class="w-full px-3 py-2 pr-10 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-400 outline-none"
+                  placeholder="••••••••">
+                <button type="button" tabindex="-1" onclick="app.togglePwd('adminPassword', this)" aria-label="Mostrar/ocultar password" class="absolute inset-y-0 right-0 flex items-center px-3 text-gray-400 hover:text-gray-600"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg></button>
+              </div>
             </div>
             <div id="adminLoginError" class="hidden text-sm text-red-600 font-semibold"></div>
             <div class="flex gap-2 pt-2">
@@ -489,7 +490,10 @@
             </div>
             <div>
               <label class="block text-sm font-semibold text-gray-700 mb-1">Password</label>
-              <input id="playerLoginPassword" type="password" class="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-emerald-400 outline-none" placeholder="••••••••">
+              <div class="relative">
+                <input id="playerLoginPassword" type="password" class="w-full px-3 py-2 pr-10 border border-gray-200 rounded-lg focus:ring-2 focus:ring-emerald-400 outline-none" placeholder="••••••••">
+                <button type="button" tabindex="-1" onclick="app.togglePwd('playerLoginPassword', this)" aria-label="Mostrar/ocultar password" class="absolute inset-y-0 right-0 flex items-center px-3 text-gray-400 hover:text-gray-600"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg></button>
+              </div>
             </div>
             <div id="playerLoginError" class="hidden text-sm text-red-600 font-semibold"></div>
             <div class="flex gap-2 pt-2">
@@ -521,7 +525,7 @@
                 src="https://image.qwenlm.ai/public_source/6e39fa4b-aff8-48f2-96e9-97740c436264/16780e44e-f071-4e64-8673-649738223400.png"
                 alt="EMTP" class="h-12 bg-white rounded-lg p-1 shadow-md">
               <div>
-                <h1 class="text-lg md:text-xl font-extrabold tracking-tight">EMTP 2026</h1>
+                <h1 class="text-lg md:text-xl font-extrabold tracking-tight">EMTP</h1>
                 <p class="text-xs text-white/80">Escola Municipal de Ténis e Padel • Oliveira do Bairro</p>
               </div>
             </div>
@@ -559,7 +563,7 @@
       </div>
 
       <footer class="text-center py-6 text-sm text-gray-500">
-        EMTP 2026 • Escola Municipal de Ténis e Padel de Oliveira do Bairro • Dados em tempo real via Supabase
+        EMTP • Escola Municipal de Ténis e Padel de Oliveira do Bairro
       </footer>
     </div>
 
@@ -580,8 +584,6 @@
         CATEGORIES: [
           { id: 'tenis-senior-masc', name: 'Sénior Masculino', icon: '👨', color: 'from-blue-500 to-blue-700', sport: 'tenis' },
           { id: 'tenis-senior-fem', name: 'Sénior Feminino', icon: '👩', color: 'from-pink-500 to-pink-700', sport: 'tenis' },
-          { id: 'tenis-juvenis-masc', name: 'Juvenis Masculinos', icon: '🧑', color: 'from-purple-500 to-purple-700', sport: 'tenis' },
-          { id: 'tenis-juvenis-fem', name: 'Juvenis Femininos', icon: '👧', color: 'from-orange-500 to-orange-700', sport: 'tenis' },
           { id: 'padel-M5', name: 'M5', icon: '🏆', color: 'from-red-500 to-red-700', sport: 'padel', desc: 'Masculino 5ª Categoria' },
           { id: 'padel-M4', name: 'M4', icon: '🏆', color: 'from-amber-500 to-amber-700', sport: 'padel', desc: 'Masculino 4ª Categoria' },
           { id: 'padel-M3', name: 'M3', icon: '🏆', color: 'from-yellow-500 to-yellow-700', sport: 'padel', desc: 'Masculino 3ª Categoria' },
@@ -596,10 +598,12 @@
           { jornada: 4, week: '5 a 11 Outubro', phase: 'group' },
           { jornada: 5, week: '12 a 18 Outubro', phase: 'group' },
           { jornada: 6, week: '19 a 25 Outubro', phase: 'group' },
-          { jornada: 7, week: '26 Outubro a 1 Novembro', phase: 'group' },
-          { jornada: 8, week: '2 a 8 Novembro', phase: 'semi', label: 'Meias-finais' },
-          { jornada: 9, week: '9 a 15 Novembro', phase: 'final', label: 'Grandes Finais' }
+          { jornada: 7, week: '26 Outubro a 1 Novembro', phase: 'group' }
         ],
+        // Intervalo de referência do calendário (mock): 14 Set → 15 Nov. É o intervalo MÁXIMO
+        // permitido entre início e fim de um torneio; as jornadas são distribuídas com igual duração.
+        MOCK_START: '2026-09-14',
+        MOCK_END: '2026-11-15',
 
         // Estado local (cache dos dados do Supabase)
         state: {
@@ -607,6 +611,8 @@
           matches: {},
           messages: { global: [] },
           inscriptions: [],
+          tournaments: {},
+          accounts: {},
           previousRanking: {},
           readMessages: {}
         },
@@ -673,6 +679,9 @@
                 sport: p.sport,
                 email: p.email,
                 phone: p.phone,
+                nif: p.nif,
+                address: p.address,
+                partnerEmail: p.partner_email,
                 partner: p.partner_name ? { name: p.partner_name } : null,
                 registeredAt: p.registered_at
               });
@@ -743,6 +752,26 @@
             .select('*')
             .order('registered_at', { ascending: false });
           this.state.inscriptions = inscriptions || [];
+
+          // Carregar torneios (datas por categoria)
+          const { data: tournaments } = await sb.from('tournaments').select('*');
+          this.state.tournaments = {};
+          (tournaments || []).forEach(t => {
+            this.state.tournaments[t.cat_id] = {
+              startDate: t.start_date,
+              endDate: t.end_date,
+              started: t.started
+            };
+          });
+
+          // Carregar contas (persistem ao reiniciar torneios)
+          const { data: accounts } = await sb.from('accounts').select('*');
+          this.state.accounts = {};
+          (accounts || []).forEach(a => {
+            this.state.accounts[(a.email || '').toLowerCase()] = {
+              email: a.email, name: a.name, nif: a.nif, address: a.address, phone: a.phone
+            };
+          });
 
           // Carregar playoffs
           const { data: playoffs } = await sb.from('playoffs').select('*');
@@ -839,7 +868,10 @@
               sport: player.sport,
               email: player.email,
               phone: player.phone,
-              partner_name: player.partner?.name || null
+              nif: player.nif || null,
+              address: player.address || null,
+              partner_name: player.partner?.name || null,
+              partner_email: player.partnerEmail || null
             }]);
           if (error) throw error;
           return data;
@@ -870,7 +902,7 @@
 
         // Valida email+password de um atleta. Devolve o player_id se corresponder, senão null.
         async loginPlayerRPC(email, password) {
-          const { data, error } = await sb.rpc('login_player', {
+          const { data, error } = await sb.rpc('login_player_v2', {
             p_email: email,
             p_password: password
           });
@@ -878,19 +910,34 @@
           return data;
         },
 
-        // Cria as credenciais (password) de um atleta recém-criado.
-        async createPlayerCredentials(playerId, password) {
-          const { error } = await sb.rpc('create_player_credentials', {
-            p_player_id: playerId,
+        // Cria a password de uma conta (email + password). Não sobrescreve se já existir.
+        async createLogin(email, password) {
+          const { error } = await sb.rpc('create_login', {
+            p_email: email,
             p_password: password
           });
           if (error) throw error;
         },
 
+        // Cria uma conta persistente (dados pessoais + password). Idempotente por email.
+        async createAccount(email, data, password) {
+          const e = (email || '').toLowerCase();
+          const { error } = await sb.from('accounts').upsert([{
+            email: e, name: data.name, nif: data.nif, address: data.address, phone: data.phone
+          }]);
+          if (error) throw error;
+          await this.createLogin(e, password);
+          this.state.accounts[e] = { email: e, name: data.name, nif: data.nif, address: data.address, phone: data.phone };
+        },
+
+        accountExists(email) {
+          return !!this.state.accounts[(email || '').toLowerCase()];
+        },
+
         // O próprio atleta muda a password (precisa de indicar a atual). Devolve true/false.
-        async changeOwnPassword(playerId, oldPassword, newPassword) {
-          const { data, error } = await sb.rpc('change_player_password', {
-            p_player_id: playerId,
+        async changeLoginPassword(email, oldPassword, newPassword) {
+          const { data, error } = await sb.rpc('change_login_password', {
+            p_email: email,
             p_old_password: oldPassword,
             p_new_password: newPassword
           });
@@ -898,17 +945,17 @@
           return data;
         },
 
-        // O admin repõe a password de um atleta (sem saber a antiga).
-        async adminResetPlayerPassword(playerId, newPassword) {
-          const { error } = await sb.rpc('admin_reset_player_password', {
-            p_player_id: playerId,
+        // O admin repõe a password de uma conta (por email, sem saber a antiga).
+        async adminResetLogin(email, newPassword) {
+          const { error } = await sb.rpc('admin_reset_login', {
+            p_email: email,
             p_new_password: newPassword
           });
           if (error) throw error;
         },
 
         async addMatchToSupabase(match, catId) {
-          const { error } = await sb
+          const { data, error } = await sb
             .from('matches')
             .upsert([{
               id: match.id,
@@ -926,8 +973,13 @@
               completed: match.completed,
               wo_player: match.wo,
               updated_at: new Date().toISOString()
-            }]);
+            }])
+            .select();
           if (error) throw error;
+          // Se a linha não voltou, a escrita foi bloqueada (RLS) sem erro explícito.
+          if (!data || data.length === 0) {
+            throw new Error('O resultado não foi guardado (permissões da base de dados). Corre novamente o supabase_schema.sql atualizado.');
+          }
         },
 
         async addMessageToSupabase(message, channelId) {
@@ -967,14 +1019,22 @@
             .from('inscriptions')
             .insert([{
               id: inscription.id,
-              player_id: inscription.playerId,
               player_name: inscription.playerName,
               cat_id: inscription.category,
+              categories: inscription.categories,
               type: inscription.type,
               sport: inscription.sport,
+              nif: inscription.nif,
+              address: inscription.address,
               email: inscription.email,
               phone: inscription.phone,
               partner_name: inscription.partnerName,
+              partner_nif: inscription.partnerNif,
+              partner_address: inscription.partnerAddress,
+              partner_email: inscription.partnerEmail,
+              partner_phone: inscription.partnerPhone,
+              temp_password: inscription.tempPassword || null,
+              partner_temp_password: inscription.partnerTempPassword || null,
               status: 'confirmed'
             }]);
           if (error) throw error;
@@ -1056,31 +1116,16 @@
             return;
           }
           try {
-            const playerId = await this.loginPlayerRPC(email, password);
-            if (!playerId) {
+            const loginEmail = await this.loginPlayerRPC(email, password);
+            if (!loginEmail) {
               errorEl.textContent = '❌ Email ou password incorretos';
               errorEl.classList.remove('hidden');
               return;
             }
-            let player = null, catId = null;
-            for (const [cId, players] of Object.entries(this.state.categories)) {
-              const found = (players || []).find(p => p.id === playerId);
-              if (found) { player = found; catId = cId; break; }
-            }
-            if (!player) {
-              errorEl.textContent = '❌ Atleta não encontrado';
-              errorEl.classList.remove('hidden');
-              return;
-            }
-            this.currentUser = {
-              role: 'player',
-              name: player.name,
-              catId: catId,
-              playerId: playerId
-            };
+            this.currentUser = this.buildPlayerUser(loginEmail);
             sessionStorage.setItem('emtpUser_v2', JSON.stringify(this.currentUser));
             this.closePlayerLogin();
-            this.currentCategory = catId;
+            if (this.currentUser.catId) this.currentCategory = this.currentUser.catId;
             this.enterApp();
             if (this.pendingAction === 'inscription') {
               this.pendingAction = null;
@@ -1091,6 +1136,26 @@
             errorEl.textContent = '❌ Erro ao entrar. Tenta novamente.';
             errorEl.classList.remove('hidden');
           }
+        },
+
+        // Constrói o currentUser (atleta) a partir do email: liga à conta e à
+        // primeira participação (categoria) se existir — pode não ter nenhuma.
+        buildPlayerUser(email) {
+          const e = (email || '').toLowerCase();
+          const account = this.state.accounts[e];
+          let player = null, catId = null;
+          for (const [cId, players] of Object.entries(this.state.categories)) {
+            const found = (players || []).find(p =>
+              (p.email || '').toLowerCase() === e || (p.partnerEmail || '').toLowerCase() === e);
+            if (found) { player = found; catId = cId; break; }
+          }
+          return {
+            role: 'player',
+            email: e,
+            name: player?.name || account?.name || e,
+            catId: catId,
+            playerId: player?.id || null
+          };
         },
 
         async logout() {
@@ -1112,7 +1177,7 @@
           document.getElementById('mainApp').classList.remove('hidden');
           this.updateProfileUI();
           this.buildTabs();
-          this.currentTab = this.currentUser.role === 'admin' ? 'dashboard' : 'perfil';
+          this.currentTab = this.currentUser.role === 'admin' ? 'dashboard' : 'settings';
           this.switchTab(this.currentTab);
         },
 
@@ -1139,17 +1204,15 @@
           const tabs = [];
           if (this.currentUser.role === 'admin') {
             tabs.push({ id: 'dashboard', label: '📊 Dashboard' });
-            tabs.push({ id: 'atletas', label: '🎽 Atletas' });
             tabs.push({ id: 'inscricoes', label: '📝 Inscrições' });
           }
-          tabs.push({ id: 'perfil', label: '👤 Perfil' });
-          tabs.push({ id: 'categorias', label: ' Categorias' });
+          tabs.push({ id: 'categorias', label: '🏆 Categorias' });
           tabs.push({ id: 'calendario', label: '📅 Calendário' });
           tabs.push({ id: 'classificacao', label: '📋 Classificação' });
           tabs.push({ id: 'resultados', label: '🎾 Resultados' });
-          tabs.push({ id: 'playoffs', label: '🔥 Playoffs' });
           tabs.push({ id: 'chat', label: '💬 Chat' });
-          tabs.push({ id: 'regulamento', label: ' Regulamento' });
+          tabs.push({ id: 'regulamento', label: '📖 Regulamento' });
+          tabs.push({ id: 'settings', label: '⚙️ Definições' });
           container.innerHTML = tabs.map(t => `
       <button onclick="app.switchTab('${t.id}')" data-tab="${t.id}" class="tab-btn px-4 py-2 rounded-lg font-semibold text-sm whitespace-nowrap transition text-gray-700 hover:bg-gray-100">${t.label}</button>
     `).join('');
@@ -1171,14 +1234,12 @@
           content.classList.add('fade-in');
           const renderers = {
             dashboard: () => this.renderDashboard(),
-            atletas: () => this.renderAtletas(),
             inscricoes: () => this.renderInscricoes(),
-            perfil: () => this.renderPerfil(),
+            settings: () => this.renderSettings(),
             categorias: () => this.renderCategorias(),
             calendario: () => this.renderCalendario(),
             classificacao: () => this.renderClassificacao(),
             resultados: () => this.renderResultados(),
-            playoffs: () => this.renderPlayoffs(),
             chat: () => this.renderChat(),
             regulamento: () => this.renderRegulamento()
           };
@@ -1228,7 +1289,7 @@
             };
           });
           matches.forEach(m => {
-            if (!m.completed) return;
+            if (!this.isMatchComplete(m)) return;
             const s1 = stats[m.p1], s2 = stats[m.p2];
             if (!s1 || !s2) return;
             s1.played++; s2.played++;
@@ -1301,11 +1362,27 @@
           return ranking;
         },
 
+        // Conta os sets ganhos por cada jogador (um set é de quem tem o número mais alto).
+        matchSetsWon(m) {
+          let s1 = 0, s2 = 0;
+          (m.sets || []).forEach(s => {
+            if (s.p1 == null || s.p2 == null) return;
+            if (s.p1 > s.p2) s1++; else if (s.p2 > s.p1) s2++;
+          });
+          return { s1, s2 };
+        },
+
+        // Regras ténis/padel: à melhor de 3 sets, o jogo termina quando alguém ganha 2 sets.
+        isMatchComplete(m) {
+          if (m.wo) return true;
+          const { s1, s2 } = this.matchSetsWon(m);
+          return s1 >= 2 || s2 >= 2;
+        },
+
         getMatchWinner(m) {
           if (m.wo) return m.wo;
-          let s1 = 0, s2 = 0;
-          m.sets.forEach(s => { if (s.p1 !== null && s.p1 > s.p2) s1++; else if (s.p1 !== null) s2++; });
-          return s1 > s2 ? m.p1 : m.p2;
+          const { s1, s2 } = this.matchSetsWon(m);
+          return s1 >= s2 ? m.p1 : m.p2;
         },
 
         generateRoundRobin(players) {
@@ -1397,7 +1474,7 @@
         </button>
         <button onclick="app.openAddPlayerModal()" class="btn-admin text-white rounded-2xl p-5 text-left card-hover shadow-md">
           <div class="text-3xl mb-2"></div>
-          <div class="font-bold">Adicionar Atleta</div>
+          <div class="font-bold">Adicionar Utilizador</div>
         </button>
         <button onclick="app.switchTab('chat')" class="btn-chat text-white rounded-2xl p-5 text-left card-hover shadow-md relative">
           <div class="text-3xl mb-2">💬</div>
@@ -1437,58 +1514,139 @@
         // ============================================
         // ATLETAS
         // ============================================
-        renderAtletas() {
+        // Definições: perfil (o que estava na tab Perfil) + (admin) utilizadores registados.
+        renderSettings() {
+          const isAdmin = this.currentUser.role === 'admin';
+          return `
+      ${this.renderPerfil()}
+      ${isAdmin ? `<div class="mt-8">${this.renderUtilizadores()}</div>` : ''}
+    `;
+        },
+
+        // Lista de utilizadores registados na app (contas — persistem entre torneios).
+        renderUtilizadores() {
           if (this.currentUser.role !== 'admin') return '<div class="text-center py-12 text-gray-500">Acesso restrito</div>';
-          const allPlayers = [];
+          // Participações (categorias) por email, para mostrar em que torneios está inscrito.
+          const partsByEmail = {};
           Object.entries(this.state.categories).forEach(([catId, players]) => {
             const cat = this.CATEGORIES.find(c => c.id === catId);
-            (players || []).forEach(p => allPlayers.push({ ...p, catId, cat }));
+            (players || []).forEach(p => {
+              [p.email, p.partnerEmail].filter(Boolean).forEach(e => {
+                const k = e.toLowerCase();
+                (partsByEmail[k] = partsByEmail[k] || []).push(cat);
+              });
+            });
           });
-          allPlayers.sort((a, b) => a.name.localeCompare(b.name));
+          const accounts = Object.values(this.state.accounts)
+            .sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email));
           return `
       <div class="mb-6 flex items-center justify-between">
-        <h2 class="text-2xl font-extrabold text-gray-900">Atletas</h2>
-        <button onclick="app.openAddPlayerModal()" class="btn-admin text-white px-4 py-2 rounded-lg font-semibold text-sm">+ Adicionar Atleta</button>
+        <h2 class="text-2xl font-extrabold text-gray-900">Utilizadores <span class="text-base font-semibold text-gray-400">(${accounts.length})</span></h2>
+        <button onclick="app.openAddPlayerModal()" class="btn-admin text-white px-4 py-2 rounded-lg font-semibold text-sm">+ Adicionar Utilizador</button>
       </div>
       <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        ${allPlayers.length === 0 ? `
+        ${accounts.length === 0 ? `
           <div class="p-12 text-center">
-            <div class="text-5xl mb-3">🎽</div>
-            <p class="text-gray-500">Sem atletas registados</p>
+            <div class="text-5xl mb-3">👥</div>
+            <p class="text-gray-500">Sem utilizadores registados</p>
           </div>
         ` : `
           <div class="divide-y divide-gray-100">
-            ${allPlayers.map(p => `
+            ${accounts.map(a => {
+              const parts = partsByEmail[(a.email || '').toLowerCase()] || [];
+              const partsLabel = parts.length ? parts.map(c => `${c.icon} ${c.name}`).join(', ') : 'Sem inscrição ativa';
+              const emailAttr = (a.email || '').replace(/'/g, "\\'");
+              return `
               <div class="p-4 flex items-center gap-3">
-                <div class="w-10 h-10 bg-gradient-to-br ${p.cat?.color || 'from-gray-400 to-gray-600'} rounded-full flex items-center justify-center text-white font-bold">${p.name.charAt(0)}</div>
+                <div class="w-10 h-10 gradient-player rounded-full flex items-center justify-center text-white font-bold flex-shrink-0">${(a.name || a.email || '?').charAt(0)}</div>
                 <div class="flex-1 min-w-0">
-                  <div class="font-bold text-sm">${p.name}</div>
-                  <div class="text-xs text-gray-500 truncate">${p.email || 'sem email'} • ${p.cat ? `${p.cat.icon} ${p.cat.name}` : ''}</div>
+                  <div class="font-bold text-sm">${a.name || '(sem nome)'}</div>
+                  <div class="text-xs text-gray-500 truncate">${a.email || 'sem email'}</div>
+                  <div class="text-xs text-gray-400 truncate">${partsLabel}</div>
                 </div>
                 <div class="flex items-center gap-3 flex-shrink-0">
-                  <button onclick="app.openAdminResetPasswordModal('${p.catId}', '${p.id}')" class="text-blue-500 text-xs font-semibold whitespace-nowrap">🔑 Password</button>
-                  <button onclick="app.removePlayer('${p.catId}', '${p.id}')" class="text-red-500 text-xs font-semibold whitespace-nowrap">🗑 Remover</button>
+                  <button onclick="app.openAccountPasswordModal('${emailAttr}')" class="text-blue-500 text-xs font-semibold whitespace-nowrap">🔑 Password</button>
+                  <button onclick="app.removeAccount('${emailAttr}')" class="text-red-500 text-xs font-semibold whitespace-nowrap">🗑 Remover</button>
                 </div>
               </div>
-            `).join('')}
+            `;
+            }).join('')}
           </div>
         `}
       </div>
     `;
         },
 
+        openAccountPasswordModal(email) {
+          const acc = this.state.accounts[(email || '').toLowerCase()];
+          this.openGenericModal(`
+      <div class="p-6">
+        <div class="flex justify-between mb-4">
+          <h3 class="text-xl font-bold">🔑 Repor Password</h3>
+          <button onclick="app.closeGenericModal()" class="text-gray-400 text-2xl leading-none">×</button>
+        </div>
+        <p class="text-sm text-gray-500 mb-4">Utilizador: <strong>${acc?.name || email}</strong> (${email})</p>
+        <div class="space-y-4">
+          <input type="hidden" id="resetEmail" value="${email}">
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1">Nova password</label>
+            <div class="relative"><input id="resetPassword" type="password" class="w-full px-3 py-2 pr-10 border border-gray-200 rounded-lg" value="emtp2026">${this.pwdEyeBtn('resetPassword')}</div>
+          </div>
+          <div id="resetPasswordError" class="hidden text-sm text-red-600 font-semibold"></div>
+          <div class="flex gap-2 pt-2">
+            <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">Cancelar</button>
+            <button onclick="app.submitAdminResetPassword()" class="flex-1 btn-admin text-white px-4 py-2 rounded-lg font-semibold">Repor</button>
+          </div>
+        </div>
+      </div>
+    `);
+        },
+
+        async removeAccount(email) {
+          const e = (email || '').toLowerCase();
+          const acc = this.state.accounts[e];
+          if (!confirm(`Apagar o utilizador "${acc?.name || email}" (${email})?\n\nIsto remove a conta, o login e todas as participações em torneios. Irreversível.`)) return;
+          try {
+            const { error } = await sb.rpc('admin_delete_account', { p_email: e });
+            if (error) throw error;
+            delete this.state.accounts[e];
+            Object.keys(this.state.categories).forEach(catId => {
+              this.state.categories[catId] = (this.state.categories[catId] || []).filter(p =>
+                (p.email || '').toLowerCase() !== e && (p.partnerEmail || '').toLowerCase() !== e);
+              this.state.matches[catId] = this.generateRoundRobin(this.state.categories[catId]);
+            });
+            this.render();
+            this.renderVacanciesOverview();
+            alert('Utilizador removido.');
+          } catch (error) {
+            console.error('Erro:', error);
+            alert('Erro ao remover utilizador: ' + (error.message || error));
+          }
+        },
+
         // ============================================
         // INSCRIÇÕES
         // ============================================
+        // Devolve o(s) nome(s) das categorias de uma inscrição, separados por vírgula.
+        inscriptionCategoriesLabel(insc) {
+          const ids = (insc.categories || insc.cat_id || insc.category || '').split(',').map(s => s.trim()).filter(Boolean);
+          if (ids.length === 0) return '';
+          return ids.map(id => this.CATEGORIES.find(c => c.id === id)?.name || id).join(', ');
+        },
+
         renderInscricoes() {
           if (this.currentUser.role !== 'admin') return '<div class="text-center py-12 text-gray-500">Acesso restrito</div>';
+          const total = this.state.inscriptions.length;
           return `
-      <div class="mb-6 flex items-center justify-between">
-        <h2 class="text-2xl font-extrabold text-gray-900">Inscrições</h2>
-        <button onclick="app.openInscription()" class="btn-inscription text-white px-4 py-2 rounded-lg font-semibold text-sm">+ Nova</button>
+      <div class="mb-6 flex items-center justify-between flex-wrap gap-3">
+        <h2 class="text-2xl font-extrabold text-gray-900">Inscrições <span class="text-base font-semibold text-gray-400">(${total})</span></h2>
+        <div class="flex gap-2">
+          <button onclick="app.exportInscriptionsExcel()" ${total === 0 ? 'disabled' : ''} class="btn-report text-white px-4 py-2 rounded-lg font-semibold text-sm ${total === 0 ? 'opacity-50 cursor-not-allowed' : ''}">📊 Exportar Excel</button>
+          <button onclick="app.openInscription()" class="btn-inscription text-white px-4 py-2 rounded-lg font-semibold text-sm">+ Nova</button>
+        </div>
       </div>
       <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        ${this.state.inscriptions.length === 0 ? `
+        ${total === 0 ? `
           <div class="p-12 text-center">
             <div class="text-5xl mb-3">📝</div>
             <p class="text-gray-500">Sem inscrições</p>
@@ -1496,13 +1654,24 @@
         ` : `
           <div class="divide-y divide-gray-100">
             ${this.state.inscriptions.map(insc => {
-            const cat = this.CATEGORIES.find(c => c.id === insc.cat_id || insc.category);
+            const sport = insc.sport;
+            const catLabel = this.inscriptionCategoriesLabel(insc);
+            const name = insc.player_name || insc.playerName || '';
             return `
-                <div class="p-4 flex items-center gap-3">
-                  <div class="w-10 h-10 bg-gradient-to-br ${cat?.color || 'from-gray-400 to-gray-600'} rounded-full flex items-center justify-center text-white font-bold">${(insc.player_name || insc.playerName).charAt(0)}</div>
-                  <div class="flex-1">
-                    <div class="font-bold text-sm">${insc.player_name || insc.playerName}</div>
-                    <div class="text-xs text-gray-500">${cat?.icon || ''} ${cat?.name || ''} • ${insc.type === 'doubles' ? 'Duplas' : 'Singulares'}</div>
+                <div class="p-4 flex items-start gap-3">
+                  <div class="w-10 h-10 gradient-inscription rounded-full flex items-center justify-center text-white font-bold flex-shrink-0">${name.charAt(0)}</div>
+                  <div class="flex-1 min-w-0">
+                    <div class="font-bold text-sm">${name}</div>
+                    <div class="text-xs text-gray-500 mb-1">${sport === 'padel' ? '🏓 Padel' : '🎾 Ténis'} • ${catLabel}</div>
+                    <div class="text-xs text-gray-600 space-y-0.5">
+                      ${insc.nif ? `<div><span class="text-gray-400">NIF:</span> ${insc.nif}</div>` : ''}
+                      ${insc.email ? `<div><span class="text-gray-400">Email:</span> ${insc.email}</div>` : ''}
+                      ${insc.phone ? `<div><span class="text-gray-400">Tel:</span> ${insc.phone}</div>` : ''}
+                      ${insc.address ? `<div><span class="text-gray-400">Morada:</span> ${insc.address}</div>` : ''}
+                      ${insc.partner_name ? `<div class="pt-1 mt-1 border-t border-gray-100"><span class="text-gray-400">2º Jogador:</span> ${insc.partner_name}${insc.partner_nif ? ` • NIF ${insc.partner_nif}` : ''}${insc.partner_phone ? ` • ${insc.partner_phone}` : ''}${insc.partner_email ? ` • ${insc.partner_email}` : ''}</div>` : ''}
+                      ${insc.temp_password ? `<div class="pt-1 mt-1 border-t border-gray-100"><span class="text-gray-400">🔑 Password (${insc.email}):</span> <span class="font-mono font-bold text-amber-700">${insc.temp_password}</span></div>` : ''}
+                      ${insc.partner_temp_password ? `<div><span class="text-gray-400">🔑 Password (${insc.partner_email}):</span> <span class="font-mono font-bold text-amber-700">${insc.partner_temp_password}</span></div>` : ''}
+                    </div>
                   </div>
                 </div>
               `;
@@ -1511,6 +1680,35 @@
         `}
       </div>
     `;
+        },
+
+        // Exporta todas as inscrições para um ficheiro Excel (.xlsx). Só admin.
+        exportInscriptionsExcel() {
+          if (this.currentUser?.role !== 'admin') return;
+          if (!this.state.inscriptions.length) { alert('Não há inscrições para exportar.'); return; }
+          const rows = this.state.inscriptions.map(insc => ({
+            'Data inscrição': insc.registered_at ? new Date(insc.registered_at).toLocaleString('pt-PT') : '',
+            'Modalidade': insc.sport === 'padel' ? 'Padel' : 'Ténis',
+            'Categoria(s)': this.inscriptionCategoriesLabel(insc),
+            'Tipo': insc.type === 'doubles' ? 'Duplas' : 'Singulares',
+            'Jogador 1 - Nome': insc.player_name && insc.partner_name ? (insc.player_name.split(' & ')[0]) : (insc.player_name || ''),
+            'Jogador 1 - NIF': insc.nif || '',
+            'Jogador 1 - Email': insc.email || '',
+            'Jogador 1 - Telemóvel': insc.phone || '',
+            'Jogador 1 - Morada': insc.address || '',
+            'Jogador 2 - Nome': insc.partner_name || '',
+            'Jogador 2 - NIF': insc.partner_nif || '',
+            'Jogador 2 - Email': insc.partner_email || '',
+            'Jogador 2 - Telemóvel': insc.partner_phone || '',
+            'Jogador 2 - Morada': insc.partner_address || '',
+            'Password temp. Jogador 1': insc.temp_password || '',
+            'Password temp. Jogador 2': insc.partner_temp_password || ''
+          }));
+          const ws = XLSX.utils.json_to_sheet(rows);
+          const wb = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(wb, ws, 'Inscrições');
+          const today = new Date().toISOString().slice(0, 10);
+          XLSX.writeFile(wb, `inscricoes-emtp-${today}.xlsx`);
         },
 
         // ============================================
@@ -1534,7 +1732,24 @@
           }
           const cat = this.CATEGORIES.find(c => c.id === this.currentUser.catId);
           const player = this.state.categories[this.currentUser.catId]?.find(p => p.id === this.currentUser.playerId);
-          if (!player) return '<div class="text-center py-12 text-gray-500">Atleta não encontrado</div>';
+          if (!player) {
+            const acc = this.state.accounts[(this.currentUser.email || '').toLowerCase()] || {};
+            return `
+        <div class="max-w-2xl mx-auto bg-white rounded-2xl shadow-sm border overflow-hidden">
+          <div class="gradient-player p-8 text-white text-center">
+            <div class="w-20 h-20 profile-badge rounded-full flex items-center justify-center mx-auto mb-4 text-3xl font-bold">${(this.currentUser.name || '?').charAt(0)}</div>
+            <h2 class="text-2xl font-bold">${acc.name || this.currentUser.name}</h2>
+            <p class="text-sm text-white/80">${this.currentUser.email || ''}</p>
+          </div>
+          <div class="p-6 text-center">
+            <div class="text-4xl mb-3">📝</div>
+            <p class="text-gray-600 mb-4">Tens conta na aplicação, mas ainda não estás inscrito em nenhum torneio aberto.</p>
+            <button onclick="app.openInscription()" class="w-full btn-inscription text-white px-4 py-3 rounded-lg font-bold mb-3">Inscrever-me num torneio</button>
+            <button onclick="app.openChangePasswordModal()" class="w-full bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 rounded-lg p-3 font-semibold">🔑 Alterar Password</button>
+          </div>
+        </div>
+      `;
+          }
           const stats = this.getPlayerStats(this.currentUser.catId);
           const myStats = stats[this.currentUser.playerId];
           const ranking = this.getRanking(this.currentUser.catId);
@@ -1581,11 +1796,11 @@
         <div class="space-y-4">
           <div>
             <label class="block text-sm font-semibold text-gray-700 mb-1">Password atual</label>
-            <input id="oldPassword" type="password" class="w-full px-3 py-2 border border-gray-200 rounded-lg">
+            <div class="relative"><input id="oldPassword" type="password" class="w-full px-3 py-2 pr-10 border border-gray-200 rounded-lg">${this.pwdEyeBtn('oldPassword')}</div>
           </div>
           <div>
             <label class="block text-sm font-semibold text-gray-700 mb-1">Nova password</label>
-            <input id="newPassword" type="password" class="w-full px-3 py-2 border border-gray-200 rounded-lg">
+            <div class="relative"><input id="newPassword" type="password" class="w-full px-3 py-2 pr-10 border border-gray-200 rounded-lg">${this.pwdEyeBtn('newPassword')}</div>
           </div>
           <div id="changePasswordError" class="hidden text-sm text-red-600 font-semibold"></div>
           <div class="flex gap-2 pt-2">
@@ -1607,8 +1822,14 @@
             errorEl.classList.remove('hidden');
             return;
           }
+          const email = this.currentUser.email || this.state.categories[this.currentUser.catId]?.find(p => p.id === this.currentUser.playerId)?.email;
+          if (!email) {
+            errorEl.textContent = 'Não foi possível determinar o email da conta. Entra novamente.';
+            errorEl.classList.remove('hidden');
+            return;
+          }
           try {
-            const ok = await this.changeOwnPassword(this.currentUser.playerId, oldPassword, newPassword);
+            const ok = await this.changeLoginPassword(email, oldPassword, newPassword);
             if (!ok) {
               errorEl.textContent = 'Password atual incorreta';
               errorEl.classList.remove('hidden');
@@ -1626,39 +1847,56 @@
         openAdminResetPasswordModal(catId, playerId) {
           const player = this.state.categories[catId]?.find(p => p.id === playerId);
           if (!player) return;
+          // Numa dupla de Padel há duas contas (dois emails); o admin escolhe qual repor.
+          const accounts = [player.email, player.partnerEmail].filter(Boolean);
+          const accountField = accounts.length > 1
+            ? `<div>
+                 <label class="block text-sm font-semibold text-gray-700 mb-1">Conta (email)</label>
+                 <select id="resetEmail" class="w-full px-3 py-2 border border-gray-200 rounded-lg">
+                   ${accounts.map(e => `<option value="${e}">${e}</option>`).join('')}
+                 </select>
+               </div>`
+            : `<input type="hidden" id="resetEmail" value="${accounts[0] || ''}">`;
           this.openGenericModal(`
       <div class="p-6">
         <div class="flex justify-between mb-4">
           <h3 class="text-xl font-bold">🔑 Repor Password</h3>
           <button onclick="app.closeGenericModal()" class="text-gray-400 text-2xl leading-none">×</button>
         </div>
-        <p class="text-sm text-gray-500 mb-4">Atleta: <strong>${player.name}</strong> (${player.email || 'sem email'})</p>
+        <p class="text-sm text-gray-500 mb-4">Atleta: <strong>${player.name}</strong></p>
         <div class="space-y-4">
+          ${accountField}
           <div>
             <label class="block text-sm font-semibold text-gray-700 mb-1">Nova password</label>
-            <input id="resetPassword" type="text" class="w-full px-3 py-2 border border-gray-200 rounded-lg" value="emtp2026">
+            <div class="relative"><input id="resetPassword" type="password" class="w-full px-3 py-2 pr-10 border border-gray-200 rounded-lg" value="emtp2026">${this.pwdEyeBtn('resetPassword')}</div>
           </div>
           <div id="resetPasswordError" class="hidden text-sm text-red-600 font-semibold"></div>
           <div class="flex gap-2 pt-2">
             <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">Cancelar</button>
-            <button onclick="app.submitAdminResetPassword('${catId}', '${playerId}')" class="flex-1 btn-admin text-white px-4 py-2 rounded-lg font-semibold">Repor</button>
+            <button onclick="app.submitAdminResetPassword()" class="flex-1 btn-admin text-white px-4 py-2 rounded-lg font-semibold">Repor</button>
           </div>
         </div>
       </div>
     `);
         },
 
-        async submitAdminResetPassword(catId, playerId) {
+        async submitAdminResetPassword() {
+          const email = document.getElementById('resetEmail').value.trim();
           const newPassword = document.getElementById('resetPassword').value.trim();
           const errorEl = document.getElementById('resetPasswordError');
           errorEl.classList.add('hidden');
+          if (!email) {
+            errorEl.textContent = 'Este atleta não tem email associado.';
+            errorEl.classList.remove('hidden');
+            return;
+          }
           if (newPassword.length < 4) {
             errorEl.textContent = 'A password deve ter pelo menos 4 caracteres';
             errorEl.classList.remove('hidden');
             return;
           }
           try {
-            await this.adminResetPlayerPassword(playerId, newPassword);
+            await this.adminResetLogin(email, newPassword);
             this.closeGenericModal();
             alert('Password reposta com sucesso!');
           } catch (error) {
@@ -1698,19 +1936,18 @@
                 </div>
               </div>
               <div class="p-4">
-                ${players.length === 0 ? '<p class="text-center text-sm text-gray-400 py-4">Sem atletas</p>' : `
+                <div class="text-xs font-bold text-gray-400 uppercase mb-2">Inscritos (${players.length})</div>
+                ${players.length === 0 ? '<p class="text-center text-sm text-gray-400 py-4">Ainda sem inscritos nesta categoria</p>' : `
                   <div class="space-y-1">
-                    ${players.slice(0, 5).map(p => `
-                      <div class="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg">
-                        <span class="text-sm font-medium">${p.name}</span>
-                        ${isAdmin ? `
-                          <div class="flex items-center gap-2">
-                            <button onclick="app.openAdminResetPasswordModal('${cat.id}', '${p.id}')" class="text-blue-500 text-xs">🔑 Password</button>
-                            <button onclick="app.removePlayer('${cat.id}', '${p.id}')" class="text-red-500 text-xs">Remover</button>
-                          </div>
-                        ` : ''}
+                    ${players.map(p => {
+                      const canRemove = isAdmin || (this.currentUser.role === 'player' && this.currentUser.playerId === p.id);
+                      return `
+                      <div class="flex items-center justify-between gap-2 p-2 hover:bg-gray-50 rounded-lg">
+                        <span class="text-sm font-medium truncate">${p.name}</span>
+                        ${canRemove ? `<button onclick="app.removeParticipation('${cat.id}', '${p.id}')" class="text-red-500 text-xs font-semibold whitespace-nowrap flex-shrink-0">✕ Remover participação</button>` : ''}
                       </div>
-                    `).join('')}
+                    `;
+                    }).join('')}
                   </div>
                 `}
               </div>
@@ -1724,18 +1961,242 @@
         // ============================================
         // CALENDÁRIO
         // ============================================
+        // ---- Utilitários de datas (em UTC para evitar desvios de fuso) ----
+        _d(str) { return new Date(str + 'T00:00:00Z'); },
+        daysBetween(fromStr, toStr) { return Math.round((this._d(toStr) - this._d(fromStr)) / 86400000); },
+        addDaysStr(str, n) { const d = this._d(str); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); },
+        formatDatePt(str) { return this._d(str).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short', timeZone: 'UTC' }); },
+        mockMaxDays() { return this.daysBetween(this.MOCK_START, this.MOCK_END); },
+        // Um torneio está sempre num de dois estados: "aberto" (started=false, com datas
+        // por defeito, editáveis) ou "iniciado" (started=true, sorteio feito). Por defeito, aberto.
+        getTournament(catId) {
+          const t = (this.state.tournaments && this.state.tournaments[catId]) || {};
+          return {
+            startDate: t.startDate || this.MOCK_START,
+            endDate: t.endDate || this.MOCK_END,
+            started: !!t.started
+          };
+        },
+
+        todayStr() { return new Date().toISOString().slice(0, 10); },
+        // Verdadeiro se a data de fim da jornada já passou (só o admin insere resultados aí).
+        isJornadaPast(catId, jornada) {
+          const t = this.getTournament(catId);
+          if (!t.started) return false;
+          const w = this.computeJornadaWindows(t.startDate, t.endDate, this.jornadasForCategory(catId))[jornada - 1];
+          if (!w) return false;
+          return this.todayStr() > w.endDate;
+        },
+
+        // Nº de jornadas de uma categoria (todos-contra-todos). Com nº ímpar de
+        // inscritos são n jornadas (cada um folga uma vez); com par são n-1.
+        // Depois de iniciado, usa as jornadas reais do sorteio.
+        jornadasForCategory(catId) {
+          const matches = this.state.matches[catId] || [];
+          if (this.getTournament(catId).started && matches.length) {
+            return Math.max(...matches.map(m => m.jornada));
+          }
+          const n = (this.state.categories[catId] || []).length;
+          if (n < 2) return this.SCHEDULE.length;
+          return n % 2 === 0 ? n - 1 : n;
+        },
+
+        // Distribui `count` jornadas por [start, end] com igual duração.
+        computeJornadaWindows(startStr, endStr, count) {
+          const n = count || this.SCHEDULE.length;
+          const total = this.daysBetween(startStr, endStr);
+          const windows = [];
+          for (let i = 0; i < n; i++) {
+            windows.push({
+              jornada: i + 1,
+              startDate: this.addDaysStr(startStr, Math.round(total * i / n)),
+              endDate: this.addDaysStr(startStr, Math.max(Math.round(total * (i + 1) / n) - 1, Math.round(total * i / n)))
+            });
+          }
+          return windows;
+        },
+
         renderCalendario() {
+          const isAdmin = this.currentUser.role === 'admin';
+          const catId = this.currentCategory;
+          const cat = this.CATEGORIES.find(c => c.id === catId);
+          const t = this.getTournament(catId);
+          const started = t.started;
+          const nJornadas = this.jornadasForCategory(catId);
+          const windows = this.computeJornadaWindows(t.startDate, t.endDate, nJornadas);
+          const nInscritos = (this.state.categories[catId] || []).length;
+          const tenisCats = this.CATEGORIES.filter(c => c.sport === 'tenis');
+          const padelCats = this.CATEGORIES.filter(c => c.sport === 'padel');
+          const statusText = started
+            ? `🟢 Iniciado • ${this.formatDatePt(t.startDate)} a ${this.formatDatePt(t.endDate)} • sorteio feito`
+            : `🟡 Aberto • ${this.formatDatePt(t.startDate)} a ${this.formatDatePt(t.endDate)} • ${nInscritos} inscrito(s) • inscrições abertas`;
           return `
-      <h2 class="text-2xl font-extrabold mb-4">Calendário Oficial</h2>
+      <div class="mb-4 flex justify-between items-center flex-wrap gap-3">
+        <h2 class="text-2xl font-extrabold">Calendário</h2>
+        <select onchange="app.currentCategory=this.value; app.render()" class="px-4 py-2 border rounded-lg font-semibold text-sm">
+          <optgroup label="🎾 Ténis">
+            ${tenisCats.map(c => `<option value="${c.id}" ${catId === c.id ? 'selected' : ''}>${c.icon} ${c.name}</option>`).join('')}
+          </optgroup>
+          <optgroup label="🏆 Padel">
+            ${padelCats.map(c => `<option value="${c.id}" ${catId === c.id ? 'selected' : ''}>${c.icon} ${c.name}</option>`).join('')}
+          </optgroup>
+        </select>
+      </div>
+      <div class="bg-white rounded-2xl p-5 shadow-sm border mb-4">
+        <div class="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <div class="font-bold text-lg">${cat.icon} ${cat.name}</div>
+            <div class="text-sm text-gray-600 mt-0.5">${statusText}</div>
+          </div>
+          ${isAdmin ? `
+            <div class="flex gap-2 flex-wrap">
+              ${!started ? `
+                <button onclick="app.openTournamentDatesModal('${catId}')" class="btn-admin text-white px-4 py-2 rounded-lg font-semibold text-sm">📅 Alterar Datas</button>
+                <button onclick="app.startTournament('${catId}')" class="btn-primary text-white px-4 py-2 rounded-lg font-semibold text-sm">▶️ Iniciar Torneio</button>
+              ` : `
+                <button onclick="app.reopenTournament('${catId}')" class="btn-danger text-white px-4 py-2 rounded-lg font-semibold text-sm">🔄 Reiniciar (voltar a aberto)</button>
+              `}
+            </div>
+          ` : ''}
+        </div>
+        ${isAdmin ? `<p class="text-xs text-gray-500 mt-3">${started ? 'Torneio iniciado. Reiniciar apaga os jogos e volta ao estado aberto (novas datas e novo sorteio).' : '1) Ajusta as datas (opcional). 2) Inicia o torneio — faz o sorteio dos jogos pelas jornadas. As inscrições estão abertas até iniciares.'}</p>` : ''}
+      </div>
       <div class="grid md:grid-cols-3 gap-4">
-        ${this.SCHEDULE.map(s => `
-          <div class="bg-white rounded-2xl p-5 shadow-sm border">
-            <div class="text-xs font-bold text-emerald-600 uppercase">${s.phase === 'group' ? `Jornada ${s.jornada}` : s.label}</div>
-            <div class="font-bold text-lg">${s.week}</div>
+        ${nInscritos < 2 ? '<div class="text-gray-400 text-sm col-span-full">Sem inscritos suficientes para gerar as jornadas.</div>' : windows.map(w => `
+          <div class="bg-white rounded-2xl p-5 shadow-sm border ${started ? '' : 'opacity-90'}">
+            <div class="text-xs font-bold text-emerald-600 uppercase">Jornada ${w.jornada}</div>
+            <div class="font-bold text-lg">${this.formatDatePt(w.startDate)} – ${this.formatDatePt(w.endDate)}</div>
           </div>
         `).join('')}
       </div>
     `;
+        },
+
+        openTournamentDatesModal(catId) {
+          const cat = this.CATEGORIES.find(c => c.id === catId);
+          const t = this.getTournament(catId);
+          const start = t?.startDate || this.MOCK_START;
+          const end = t?.endDate || this.MOCK_END;
+          this.openGenericModal(`
+      <div class="p-6">
+        <div class="flex justify-between mb-4">
+          <h3 class="text-xl font-bold">📅 Datas do Torneio</h3>
+          <button onclick="app.closeGenericModal()" class="text-gray-400 text-2xl leading-none">×</button>
+        </div>
+        <p class="text-sm text-gray-500 mb-4">Categoria: <strong>${cat.icon} ${cat.name}</strong></p>
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1">Data de início</label>
+            <input id="tourStart" type="date" value="${start}" min="${this.MOCK_START}" max="${this.MOCK_END}" class="w-full px-3 py-2 border border-gray-200 rounded-lg">
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1">Data de fim</label>
+            <input id="tourEnd" type="date" value="${end}" min="${this.MOCK_START}" max="${this.MOCK_END}" class="w-full px-3 py-2 border border-gray-200 rounded-lg">
+          </div>
+          <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-900">
+            Intervalo máximo: ${this.formatDatePt(this.MOCK_START)} a ${this.formatDatePt(this.MOCK_END)} (${this.mockMaxDays()} dias). As jornadas (todos-contra-todos, conforme o nº de inscritos) são distribuídas com igual duração dentro do intervalo escolhido.
+          </div>
+          <div id="tourDatesError" class="hidden text-sm text-red-600 font-semibold"></div>
+          <div class="flex gap-2 pt-2">
+            <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">Cancelar</button>
+            <button onclick="app.saveTournamentDates('${catId}')" class="flex-1 btn-admin text-white px-4 py-2 rounded-lg font-semibold">Guardar Datas</button>
+          </div>
+        </div>
+      </div>
+    `);
+        },
+
+        async saveTournamentDates(catId) {
+          const start = document.getElementById('tourStart').value;
+          const end = document.getElementById('tourEnd').value;
+          const errorEl = document.getElementById('tourDatesError');
+          errorEl.classList.add('hidden');
+          const fail = msg => { errorEl.textContent = msg; errorEl.classList.remove('hidden'); };
+          if (!start || !end) return fail('Preenche as duas datas.');
+          const span = this.daysBetween(start, end);
+          if (span <= 0) return fail('A data de fim tem de ser depois da de início.');
+          if (span < this.SCHEDULE.length) return fail(`O torneio precisa de pelo menos ${this.SCHEDULE.length} dias (uma jornada por dia, no mínimo).`);
+          if (span > this.mockMaxDays()) return fail(`O intervalo não pode exceder ${this.mockMaxDays()} dias (${this.formatDatePt(this.MOCK_START)} a ${this.formatDatePt(this.MOCK_END)}).`);
+          const existing = this.getTournament(catId);
+          const obj = { startDate: start, endDate: end, started: existing?.started || false };
+          try {
+            await this.saveTournamentToSupabase(catId, obj);
+            this.state.tournaments[catId] = obj;
+            this.closeGenericModal();
+            this.render();
+            alert('Datas guardadas!' + (obj.started ? '' : ' Podes agora iniciar o torneio.'));
+          } catch (error) {
+            console.error('Erro:', error);
+            fail('Erro ao guardar datas: ' + (error.message || error));
+          }
+        },
+
+        async saveTournamentToSupabase(catId, obj) {
+          const { error } = await sb.from('tournaments').upsert([{
+            cat_id: catId,
+            start_date: obj.startDate,
+            end_date: obj.endDate,
+            started: obj.started,
+            updated_at: new Date().toISOString()
+          }]);
+          if (error) throw error;
+        },
+
+        shuffleArray(arr) {
+          const a = [...arr];
+          for (let i = a.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [a[i], a[j]] = [a[j], a[i]];
+          }
+          return a;
+        },
+
+        // Fase 2: iniciar o torneio = sorteio dos jogos pelas jornadas (round-robin com ordem aleatória).
+        async startTournament(catId) {
+          const t = this.getTournament(catId);
+          const cat = this.CATEGORIES.find(c => c.id === catId);
+          if (!t || !t.startDate || !t.endDate) { alert('⚠️ Define primeiro as datas do torneio.'); return; }
+          const players = this.state.categories[catId] || [];
+          if (players.length < 2) { alert('⚠️ São precisos pelo menos 2 inscritos para iniciar.'); return; }
+          const confirmMsg = t.started
+            ? 'O torneio já foi iniciado. Refazer o sorteio dos jogos? Os resultados atuais desta categoria serão apagados.'
+            : `Iniciar o torneio de ${cat.name}? Vai fazer o sorteio dos jogos pelas jornadas.`;
+          if (!confirm(confirmMsg)) return;
+          try {
+            const drawn = this.shuffleArray(players);
+            const matches = this.generateRoundRobin(drawn).map((m, i) => ({ ...m, id: `${catId}-m${i}` }));
+            // Substituir jogos desta categoria
+            await sb.from('matches').delete().eq('cat_id', catId);
+            for (const m of matches) await this.addMatchToSupabase(m, catId);
+            this.state.matches[catId] = matches;
+            const obj = { startDate: t.startDate, endDate: t.endDate, started: true };
+            await this.saveTournamentToSupabase(catId, obj);
+            this.state.tournaments[catId] = obj;
+            this.render();
+            alert(`✅ Torneio de ${cat.name} iniciado! Sorteio concluído (${matches.length} jogos distribuídos pelas jornadas).`);
+          } catch (error) {
+            console.error('Erro:', error);
+            alert('Erro ao iniciar o torneio: ' + (error.message || error));
+          }
+        },
+
+        // Volta o torneio ao estado ABERTO: apaga os jogos (sorteio) mas mantém as inscrições.
+        async reopenTournament(catId) {
+          const cat = this.CATEGORIES.find(c => c.id === catId);
+          const t = this.getTournament(catId);
+          if (!confirm(`Reiniciar o torneio de ${cat.name}?\n\n• Volta ao estado ABERTO.\n• Os jogos e resultados atuais são apagados.\n• As inscrições mantêm-se (podes alterar as datas e iniciar de novo).`)) return;
+          try {
+            await sb.from('matches').delete().eq('cat_id', catId);
+            this.state.matches[catId] = this.generateRoundRobin(this.state.categories[catId] || []);
+            const obj = { startDate: t.startDate, endDate: t.endDate, started: false };
+            await this.saveTournamentToSupabase(catId, obj);
+            this.state.tournaments[catId] = obj;
+            this.render();
+            alert(`Torneio de ${cat.name} reaberto. Podes alterar as datas e iniciar novamente.`);
+          } catch (error) {
+            console.error('Erro:', error);
+            alert('Erro ao reiniciar o torneio: ' + (error.message || error));
+          }
         },
 
         // ============================================
@@ -1825,6 +2286,8 @@
           const matches = this.state.matches[catId] || [];
           const players = this.state.categories[catId] || [];
           if (players.length === 0) return '<div class="text-center py-12 text-gray-500">Sem atletas</div>';
+          const started = !!this.getTournament(catId)?.started;
+          if (!started) return `<div class="text-center py-12 text-gray-500"><div class="text-5xl mb-3">📅</div><p class="font-semibold">O torneio desta categoria ainda não foi iniciado.</p>${isAdmin ? '<p class="text-sm mt-2">Vai a <strong>Calendário</strong> para definir as datas e iniciar o torneio (sorteio dos jogos).</p>' : '<p class="text-sm mt-2">Os jogos aparecem aqui depois de a organização iniciar o torneio.</p>'}</div>`;
           const getPlayer = id => players.find(p => p.id === id);
           const filter = this.currentJornadaFilter;
           const filtered = filter === 'all' ? matches : matches.filter(m => m.jornada == filter);
@@ -1836,32 +2299,55 @@
           if (Object.keys(byJornada).length === 0) return '<div class="text-center py-12 text-gray-500">Sem jogos</div>';
           const isPlayerInCategory = this.currentUser.role === 'player' && this.currentUser.catId === catId;
           const myPlayerId = this.currentUser.playerId;
+          const t = this.getTournament(catId);
+          const windows = this.computeJornadaWindows(t.startDate, t.endDate, this.jornadasForCategory(catId));
           return `
       <div class="space-y-6">
         ${Object.keys(byJornada).sort((a, b) => a - b).map(j => {
             const jMatches = byJornada[j];
+            const w = windows[j - 1];
+            const dateStr = w ? `${this.formatDatePt(w.startDate)} – ${this.formatDatePt(w.endDate)}` : '';
             return `
             <div class="bg-white rounded-2xl shadow-sm border overflow-hidden">
-              <div class="p-4 bg-emerald-50 border-b"><div class="font-bold text-sm">Jornada ${j}</div></div>
+              <div class="p-4 bg-emerald-50 border-b flex items-center justify-between gap-2">
+                <div class="font-bold text-sm">Jornada ${j}</div>
+                ${dateStr ? `<div class="text-xs font-semibold text-emerald-700 whitespace-nowrap">📅 ${dateStr}</div>` : ''}
+              </div>
               <div class="divide-y">
                 ${jMatches.map(m => {
               const p1 = getPlayer(m.p1), p2 = getPlayer(m.p2);
               if (!p1 || !p2) return '';
-              const winner = m.completed ? this.getMatchWinner(m) : null;
+              const completed = this.isMatchComplete(m);
+              const winner = completed ? this.getMatchWinner(m) : null;
+              const winnerName = winner === m.p1 ? p1.name : (winner === m.p2 ? p2.name : '');
               const isMyMatch = isPlayerInCategory && (m.p1 === myPlayerId || m.p2 === myPlayerId);
-              const canReport = isMyMatch && !m.completed;
+              const jornadaPast = this.isJornadaPast(catId, m.jornada);
+              // Regras do jogador: só o seu jogo; reportar só se ainda não inserido e dentro do prazo;
+              // se já inserido, só pode contestar (mensagem ao admin).
+              let playerBtn = '';
+              if (isMyMatch) {
+                if (completed) {
+                  playerBtn = `<button onclick="app.openContestModal('${catId}', '${m.id}')" class="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-semibold">⚠️ Contestar resultado</button>`;
+                } else if (!jornadaPast) {
+                  playerBtn = `<button onclick="app.openPlayerResultModal('${catId}', '${m.id}')" class="px-4 py-1.5 btn-report text-white rounded-lg text-xs font-semibold">📝 Reportar Resultado</button>`;
+                } else {
+                  playerBtn = `<span class="text-xs text-gray-400 italic">Prazo terminado — só o admin insere</span>`;
+                }
+              }
+              const scoreStr = m.sets.filter(s => s.p1 !== null && s.p2 !== null).map(s => `${s.p1}-${s.p2}`).join('  ');
               return `
                     <div class="p-4">
-                      <div class="flex items-center justify-between gap-3">
-                        <div class="flex-1 text-right font-semibold ${winner === m.p1 ? 'text-emerald-700' : ''}">${p1.name} ${m.p1 === myPlayerId ? '<span class="text-xs text-emerald-600">(tu)</span>' : ''}</div>
-                        <div class="px-4 py-2 bg-gray-50 rounded-xl min-w-[120px] text-center">
-                          ${m.completed ? m.sets.filter(s => s.p1 !== null).map(s => `${s.p1}-${s.p2}`).join(' ') : '<div class="text-xs text-gray-400">A jogar</div>'}
+                      <div class="flex items-center justify-between gap-2">
+                        <div class="flex-1 text-right truncate min-w-0 ${winner === m.p1 ? 'text-emerald-700 font-bold' : 'font-semibold'}">${winner === m.p1 ? '🏆 ' : ''}${p1.name} ${m.p1 === myPlayerId ? '<span class="text-xs text-emerald-600">(tu)</span>' : ''}</div>
+                        <div class="px-4 py-2 rounded-xl min-w-[110px] text-center whitespace-nowrap ${completed ? 'bg-emerald-50 text-emerald-800 font-mono font-bold' : 'bg-gray-50'}">
+                          ${completed ? scoreStr : '<span class="text-xs text-gray-400">A jogar</span>'}
                         </div>
-                        <div class="flex-1 text-left font-semibold ${winner === m.p2 ? 'text-emerald-700' : ''}">${p2.name} ${m.p2 === myPlayerId ? '<span class="text-xs text-emerald-600">(tu)</span>' : ''}</div>
+                        <div class="flex-1 text-left truncate min-w-0 ${winner === m.p2 ? 'text-emerald-700 font-bold' : 'font-semibold'}">${p2.name} ${m.p2 === myPlayerId ? '<span class="text-xs text-emerald-600">(tu)</span>' : ''}${winner === m.p2 ? ' 🏆' : ''}</div>
                       </div>
+                      ${completed && winnerName ? `<div class="text-center text-xs font-semibold text-emerald-700 mt-2">Vencedor: 🏆 ${winnerName}</div>` : ''}
                       <div class="mt-3 flex justify-center gap-2 flex-wrap">
-                        ${isAdmin ? `<button onclick="app.openMatchModal('${catId}', '${m.id}')" class="px-4 py-1.5 btn-admin text-white rounded-lg text-xs font-semibold">${m.completed ? '✏️ Editar' : '📝 Registar (Admin)'}</button>` : ''}
-                        ${canReport ? `<button onclick="app.openPlayerResultModal('${catId}', '${m.id}')" class="px-4 py-1.5 btn-report text-white rounded-lg text-xs font-semibold">📝 Reportar Resultado</button>` : ''}
+                        ${isAdmin ? `<button onclick="app.openMatchModal('${catId}', '${m.id}')" class="px-4 py-1.5 btn-admin text-white rounded-lg text-xs font-semibold">${completed ? '✏️ Editar' : '📝 Registar (Admin)'}</button>` : ''}
+                        ${playerBtn}
                       </div>
                     </div>
                   `;
@@ -1888,6 +2374,28 @@
               color: c.color, sport: c.sport
             });
           });
+          // Canais privados com os admins (contestações / assuntos privados).
+          const isAdminUser = this.currentUser.role === 'admin';
+          if (isAdminUser) {
+            // O admin vê um canal por cada atleta que tenha contactado.
+            Object.keys(this.state.messages)
+              .filter(chId => chId.startsWith('dm:'))
+              .sort()
+              .forEach(chId => {
+                const email = chId.slice(3);
+                const acc = this.state.accounts[email];
+                channels.push({
+                  id: chId, name: acc?.name || email, icon: '🔒',
+                  desc: 'Privado com admins', color: 'from-rose-500 to-red-600'
+                });
+              });
+          } else {
+            const myDm = `dm:${(this.currentUser.email || '').toLowerCase()}`;
+            channels.push({
+              id: myDm, name: 'Admins', icon: '🔒',
+              desc: 'Mensagem privada aos admins', color: 'from-rose-500 to-red-600'
+            });
+          }
           const currentChannel = channels.find(ch => ch.id === this.currentChatChannel) || channels[0];
           const messages = this.state.messages[this.currentChatChannel] || [];
           const isAdmin = this.currentUser.role === 'admin';
@@ -1956,7 +2464,7 @@
           </div>
           <div class="p-3 border-t border-gray-100 bg-white">
             <div class="flex gap-2 mb-2 flex-wrap">
-              ${this.currentChatChannel !== 'global' ? `
+              ${this.currentChatChannel !== 'global' && !this.currentChatChannel.startsWith('dm:') ? `
                 <button onclick="app.openRescheduleModal()" class="px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-800 rounded-lg text-xs font-semibold">🔄 Propor Remarcação</button>
               ` : ''}
               ${isAdmin ? `
@@ -2168,11 +2676,6 @@
         // INSCRIÇÃO
         // ============================================
         openInscription() {
-          if (!this.currentUser) {
-            this.pendingAction = 'inscription';
-            this.showPlayerLogin();
-            return;
-          }
           this.renderInscriptionForm();
           document.getElementById('inscriptionModal').classList.remove('hidden');
           document.body.style.overflow = 'hidden';
@@ -2181,6 +2684,10 @@
         closeInscription() {
           document.getElementById('inscriptionModal').classList.add('hidden');
           document.body.style.overflow = '';
+          // Se o utilizador ficou autenticado durante a inscrição (fez login aqui), entra na app.
+          if (this.currentUser && !document.getElementById('loginScreen').classList.contains('hidden')) {
+            this.enterApp();
+          }
         },
 
         renderInscriptionForm() {
@@ -2192,14 +2699,114 @@
             <img src="https://image.qwenlm.ai/public_source/6e39fa4b-aff8-48f2-96e9-97740c436264/16780e44e-f071-4e64-8673-649738223400.png" alt="EMTP" class="h-12 w-12 bg-white rounded-lg p-1">
             <div>
               <div class="text-xs font-bold uppercase tracking-wide text-white/80">Formulário de Inscrição</div>
-              <h2 class="text-xl font-extrabold mt-1">EMTP 2026</h2>
+              <h2 class="text-xl font-extrabold mt-1">EMTP</h2>
               <p class="text-xs text-white/80">Escola Municipal de Ténis e Padel • Oliveira do Bairro</p>
             </div>
           </div>
           <button onclick="app.closeInscription()" class="text-white/80 hover:text-white text-3xl leading-none w-10 h-10 flex items-center justify-center rounded-full hover:bg-white/10 transition">×</button>
         </div>
       </div>
+      <div id="inscriptionBody"></div>
+    `;
+          // Se já está autenticado como atleta, salta a pergunta e pré-preenche.
+          if (this.currentUser && this.currentUser.role === 'player') {
+            this.showInscriptionMainForm(this.prefillFromCurrentUser());
+          } else {
+            this.showInscriptionAccountStep();
+          }
+        },
+
+        // Passo 0: "Já tens conta?" (default: Não).
+        showInscriptionAccountStep() {
+          document.getElementById('inscriptionBody').innerHTML = `
       <div class="p-6">
+        <div class="mb-2">
+          <label class="text-sm font-bold text-gray-900 block mb-3">Já tens conta na aplicação?</label>
+          <div class="grid grid-cols-2 gap-3">
+            <label class="cursor-pointer">
+              <input type="radio" name="hasAccount" value="no" checked onchange="app.onAccountChoiceChange()" class="hidden peer">
+              <div class="peer-checked:ring-2 peer-checked:ring-orange-500 peer-checked:bg-orange-50 border-2 border-gray-200 rounded-xl p-3 text-center font-bold text-gray-900">Não</div>
+            </label>
+            <label class="cursor-pointer">
+              <input type="radio" name="hasAccount" value="yes" onchange="app.onAccountChoiceChange()" class="hidden peer">
+              <div class="peer-checked:ring-2 peer-checked:ring-orange-500 peer-checked:bg-orange-50 border-2 border-gray-200 rounded-xl p-3 text-center font-bold text-gray-900">Sim</div>
+            </label>
+          </div>
+        </div>
+        <div id="accountChoiceArea" class="mt-2"></div>
+      </div>
+    `;
+          this.onAccountChoiceChange();
+        },
+
+        onAccountChoiceChange() {
+          const hasAccount = document.querySelector('input[name="hasAccount"]:checked')?.value === 'yes';
+          const area = document.getElementById('accountChoiceArea');
+          if (hasAccount) {
+            area.innerHTML = this.inscriptionLoginHTML();
+          } else {
+            area.innerHTML = this.inscriptionMainFormHTML(null);
+            this.updateInscriptionSport();
+          }
+        },
+
+        // Sub-formulário de login dentro da inscrição (para quem já tem conta).
+        inscriptionLoginHTML() {
+          return `
+      <div class="bg-gray-50 border border-gray-200 rounded-xl p-4">
+        <p class="text-sm text-gray-600 mb-3">Entra com a tua conta para continuares a inscrição (os teus dados ficam pré-preenchidos).</p>
+        <div class="space-y-3">
+          <input id="inscLoginEmail" type="email" autocomplete="off" placeholder="O teu email" class="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-orange-400 outline-none">
+          <div class="relative"><input id="inscLoginPassword" type="password" placeholder="Password" class="w-full px-3 py-2 pr-10 border border-gray-200 rounded-lg focus:ring-2 focus:ring-orange-400 outline-none">${this.pwdEyeBtn('inscLoginPassword')}</div>
+          <div id="inscLoginError" class="hidden text-sm text-red-600 font-semibold"></div>
+          <button onclick="app.doInscriptionLogin()" class="w-full btn-primary text-white px-4 py-2 rounded-lg font-semibold">Entrar e continuar</button>
+        </div>
+      </div>
+    `;
+        },
+
+        async doInscriptionLogin() {
+          const email = document.getElementById('inscLoginEmail').value.trim();
+          const password = document.getElementById('inscLoginPassword').value;
+          const errorEl = document.getElementById('inscLoginError');
+          errorEl.classList.add('hidden');
+          if (!email || !password) { errorEl.textContent = 'Preenche email e password'; errorEl.classList.remove('hidden'); return; }
+          try {
+            const loginEmail = await this.loginPlayerRPC(email, password);
+            if (!loginEmail) { errorEl.textContent = '❌ Email ou password incorretos'; errorEl.classList.remove('hidden'); return; }
+            this.currentUser = this.buildPlayerUser(loginEmail);
+            sessionStorage.setItem('emtpUser_v2', JSON.stringify(this.currentUser));
+            // Continua a inscrição, já com os dados pré-preenchidos.
+            this.showInscriptionMainForm(this.prefillFromCurrentUser());
+          } catch (error) {
+            console.error('Erro:', error);
+            errorEl.textContent = '❌ Erro ao entrar. Tenta novamente.';
+            errorEl.classList.remove('hidden');
+          }
+        },
+
+        // Dados para pré-preencher a inscrição a partir da conta autenticada.
+        prefillFromCurrentUser() {
+          const e = (this.currentUser.email || '').toLowerCase();
+          const account = this.state.accounts[e];
+          const p = this.state.categories[this.currentUser.catId]?.find(x => x.id === this.currentUser.playerId);
+          return {
+            name: account?.name || (p ? (p.name || '').split(' & ')[0] : this.currentUser.name) || '',
+            email: this.currentUser.email || '',
+            phone: account?.phone || p?.phone || '',
+            nif: account?.nif || p?.nif || '',
+            address: account?.address || p?.address || ''
+          };
+        },
+
+        showInscriptionMainForm(prefill) {
+          document.getElementById('inscriptionBody').innerHTML = `<div class="p-6">${this.inscriptionMainFormHTML(prefill)}</div>`;
+          this.updateInscriptionSport();
+        },
+
+        // HTML do formulário principal de inscrição (modalidade, categoria, dados).
+        inscriptionMainFormHTML(prefill) {
+          return `
         <div class="mb-6">
           <div class="flex items-center gap-2 mb-3">
             <div class="w-7 h-7 bg-orange-500 text-white rounded-full flex items-center justify-center text-sm font-bold">1</div>
@@ -2216,56 +2823,34 @@
             <label class="cursor-pointer">
               <input type="radio" name="inscriptionSport" value="padel" onchange="app.updateInscriptionSport()" class="hidden peer">
               <div class="peer-checked:ring-2 peer-checked:ring-purple-500 peer-checked:bg-purple-50 border-2 border-gray-200 rounded-xl p-4 text-center transition">
-                <div class="text-3xl mb-1"></div>
+                <div class="text-3xl mb-1">🏓</div>
                 <div class="font-bold text-gray-900">Padel</div>
-              </div>
-            </label>
-          </div>
-        </div>
-        <div class="mb-6">
-          <div class="flex items-center gap-2 mb-3">
-            <div class="w-7 h-7 bg-orange-500 text-white rounded-full flex items-center justify-center text-sm font-bold">2</div>
-            <label class="text-sm font-bold text-gray-900">Tipo *</label>
-          </div>
-          <div class="grid grid-cols-2 gap-3">
-            <label class="cursor-pointer">
-              <input type="radio" name="inscriptionType" value="single" checked onchange="app.updateInscriptionForm()" class="hidden peer">
-              <div class="peer-checked:ring-2 peer-checked:ring-orange-500 peer-checked:bg-orange-50 border-2 border-gray-200 rounded-xl p-4 text-center transition">
-                <div class="text-3xl mb-1"></div>
-                <div class="font-bold text-gray-900">Singulares</div>
-              </div>
-            </label>
-            <label class="cursor-pointer">
-              <input type="radio" name="inscriptionType" value="doubles" onchange="app.updateInscriptionForm()" class="hidden peer">
-              <div class="peer-checked:ring-2 peer-checked:ring-orange-500 peer-checked:bg-orange-50 border-2 border-gray-200 rounded-xl p-4 text-center transition">
-                <div class="text-3xl mb-1">🎾</div>
-                <div class="font-bold text-gray-900">Duplas</div>
               </div>
             </label>
           </div>
         </div>
         <div class="mb-6 bg-gradient-to-br from-orange-50 to-amber-50 rounded-2xl p-5 border-2 border-orange-200">
           <div class="flex items-center gap-2 mb-3">
-            <div class="w-7 h-7 bg-orange-500 text-white rounded-full flex items-center justify-center text-sm font-bold">3</div>
-            <label class="text-sm font-bold text-gray-900">Categoria *</label>
+            <div class="w-7 h-7 bg-orange-500 text-white rounded-full flex items-center justify-center text-sm font-bold">2</div>
+            <label class="text-sm font-bold text-gray-900" id="categoryLabel">Categoria *</label>
             <span class="ml-auto text-xs bg-orange-500 text-white px-2 py-0.5 rounded-full font-bold">OBRIGATÓRIO</span>
           </div>
+          <p id="categoryHint" class="text-xs text-gray-500 mb-3 hidden">Podes escolher uma ou várias categorias.</p>
           <div id="categoryOptions" class="grid grid-cols-1 sm:grid-cols-2 gap-3">${this.renderCategoryOptions()}</div>
         </div>
         <div class="mb-6">
           <div class="flex items-center gap-2 mb-3">
-            <div class="w-7 h-7 bg-orange-500 text-white rounded-full flex items-center justify-center text-sm font-bold">4</div>
-            <label class="text-sm font-bold text-gray-900">Dados *</label>
+            <div class="w-7 h-7 bg-orange-500 text-white rounded-full flex items-center justify-center text-sm font-bold">3</div>
+            <label class="text-sm font-bold text-gray-900" id="player1Label">Dados do Jogador *</label>
           </div>
-          <p class="text-xs text-gray-500 mb-2">Pesquisa e seleciona o atleta (já tem de estar criado pelo admin)</p>
-          ${this.renderAthleteSearchField('insc', '🔍 Pesquisar atleta (nome ou email)...')}
+          ${this.renderPlayerFields('p1', prefill)}
         </div>
         <div id="partnerSection" class="mb-6 hidden">
           <div class="flex items-center gap-2 mb-3">
-            <div class="w-7 h-7 bg-orange-500 text-white rounded-full flex items-center justify-center text-sm font-bold">5</div>
-            <label class="text-sm font-bold text-gray-900">Parceiro *</label>
+            <div class="w-7 h-7 bg-orange-500 text-white rounded-full flex items-center justify-center text-sm font-bold">4</div>
+            <label class="text-sm font-bold text-gray-900">Dados do 2º Jogador *</label>
           </div>
-          ${this.renderAthleteSearchField('inscPartner', '🔍 Pesquisar parceiro (nome ou email)...')}
+          ${this.renderPlayerFields('p2', null)}
         </div>
         <div class="mb-6">
           <label class="flex items-start gap-3 cursor-pointer p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition">
@@ -2276,6 +2861,35 @@
         <div class="flex gap-2">
           <button onclick="app.closeInscription()" class="flex-1 px-4 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">Cancelar</button>
           <button onclick="app.submitInscription()" class="flex-1 btn-inscription text-white px-4 py-3 rounded-lg font-bold">✓ Submeter</button>
+        </div>
+    `;
+        },
+
+        // Campos de dados pessoais de um jogador (prefixo 'p1' ou 'p2'), com pré-preenchimento opcional.
+        renderPlayerFields(prefix, prefill) {
+          const v = prefill || {};
+          const esc = s => (s || '').toString().replace(/"/g, '&quot;');
+          return `
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div class="sm:col-span-2">
+          <label class="block text-xs font-semibold text-gray-600 mb-1">Nome completo *</label>
+          <input id="${prefix}Name" type="text" value="${esc(v.name)}" autocomplete="off" class="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-orange-400 outline-none" placeholder="Nome do jogador">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">NIF *</label>
+          <input id="${prefix}Nif" type="text" value="${esc(v.nif)}" inputmode="numeric" autocomplete="off" class="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-orange-400 outline-none" placeholder="000000000">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">Telemóvel *</label>
+          <input id="${prefix}Phone" type="tel" value="${esc(v.phone)}" autocomplete="off" class="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-orange-400 outline-none" placeholder="9XX XXX XXX">
+        </div>
+        <div class="sm:col-span-2">
+          <label class="block text-xs font-semibold text-gray-600 mb-1">Email *</label>
+          <input id="${prefix}Email" type="email" value="${esc(v.email)}" autocomplete="off" class="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-orange-400 outline-none" placeholder="nome@email.com">
+        </div>
+        <div class="sm:col-span-2">
+          <label class="block text-xs font-semibold text-gray-600 mb-1">Morada *</label>
+          <input id="${prefix}Address" type="text" value="${esc(v.address)}" autocomplete="off" class="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-orange-400 outline-none" placeholder="Rua, nº, código-postal, localidade">
         </div>
       </div>
     `;
@@ -2327,24 +2941,19 @@
         renderCategoryOptions() {
           const sport = document.querySelector('input[name="inscriptionSport"]:checked')?.value || 'tenis';
           const filtered = this.CATEGORIES.filter(c => c.sport === sport);
+          // Ténis: escolha única (radio). Padel: uma ou várias categorias (checkbox).
+          const inputType = sport === 'padel' ? 'checkbox' : 'radio';
           return filtered.map(cat => {
-            const vacancies = this.getVacancies(cat.id);
-            const isFull = vacancies <= 0;
-            const pctFull = ((this.MAX_PER_CATEGORY - vacancies) / this.MAX_PER_CATEGORY) * 100;
             return `
-        <label class="category-option block ${isFull ? 'opacity-50 cursor-not-allowed' : ''}">
-          <input type="radio" name="inscCategory" value="${cat.id}" ${isFull ? 'disabled' : ''} class="hidden peer">
-          <div class="peer-checked:ring-4 peer-checked:ring-orange-500 peer-checked:bg-orange-50 peer-checked:border-orange-500 border-2 border-gray-200 rounded-xl p-4 transition bg-white relative overflow-hidden">
-            ${!isFull ? `<div class="absolute top-0 right-0 bg-emerald-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-bl-lg">${vacancies} VAGA${vacancies > 1 ? 'S' : ''}</div>` : '<div class="absolute top-0 right-0 bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-bl-lg">COMPLETA</div>'}
-            <div class="flex items-center gap-3 mb-2">
+        <label class="category-option block">
+          <input type="${inputType}" name="inscCategory" value="${cat.id}" class="hidden peer">
+          <div class="peer-checked:ring-4 peer-checked:ring-orange-500 peer-checked:bg-orange-50 peer-checked:border-orange-500 border-2 border-gray-200 rounded-xl p-4 transition bg-white">
+            <div class="flex items-center gap-3">
               <div class="text-3xl">${cat.icon}</div>
               <div class="flex-1 min-w-0">
                 <div class="font-bold text-gray-900 text-sm">${cat.name}</div>
                 ${cat.desc ? `<div class="text-[10px] text-gray-500">${cat.desc}</div>` : ''}
               </div>
-            </div>
-            <div class="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
-              <div class="bg-gradient-to-r ${cat.color} h-full" style="width: ${pctFull}%"></div>
             </div>
           </div>
         </label>
@@ -2352,83 +2961,211 @@
           }).join('');
         },
 
-        updateInscriptionSport() { document.getElementById('categoryOptions').innerHTML = this.renderCategoryOptions(); },
-        updateInscriptionForm() { document.getElementById('partnerSection').classList.toggle('hidden', document.querySelector('input[name="inscriptionType"]:checked').value !== 'doubles'); },
+        // Ao mudar a modalidade: atualiza as categorias e mostra/esconde o 2º jogador (só Padel).
+        updateInscriptionSport() {
+          const sport = document.querySelector('input[name="inscriptionSport"]:checked')?.value || 'tenis';
+          const isPadel = sport === 'padel';
+          document.getElementById('categoryOptions').innerHTML = this.renderCategoryOptions();
+          document.getElementById('partnerSection').classList.toggle('hidden', !isPadel);
+          document.getElementById('categoryLabel').textContent = isPadel ? 'Categoria(s) *' : 'Categoria *';
+          document.getElementById('categoryHint').classList.toggle('hidden', !isPadel);
+          document.getElementById('player1Label').textContent = isPadel ? 'Dados do 1º Jogador *' : 'Dados do Jogador *';
+        },
+
+        // Lê e valida os campos de um jogador. Devolve o objeto ou null (com alerta) se algo faltar.
+        collectPlayerData(prefix, label) {
+          const name = document.getElementById(`${prefix}Name`).value.trim();
+          const nif = document.getElementById(`${prefix}Nif`).value.trim();
+          const phone = document.getElementById(`${prefix}Phone`).value.trim();
+          const email = document.getElementById(`${prefix}Email`).value.trim();
+          const address = document.getElementById(`${prefix}Address`).value.trim();
+          if (!name || !nif || !phone || !email || !address) {
+            alert(`⚠️ Preenche todos os dados de: ${label}`);
+            return null;
+          }
+          if (!/^\S+@\S+\.\S+$/.test(email)) {
+            alert(`⚠️ Email inválido em: ${label}`);
+            return null;
+          }
+          return { name, nif, phone, email, address };
+        },
+
+        // Procura um atleta já existente pelo email (em qualquer categoria).
+        findPlayerByEmail(email) {
+          const e = (email || '').trim().toLowerCase();
+          if (!e) return null;
+          return Object.values(this.state.categories).flat().find(p => (p.email || '').toLowerCase() === e) || null;
+        },
+
+        // Gera uma password temporária legível (o atleta altera-a no 1º login).
+        generateTempPassword() {
+          return 'emtp' + Math.floor(1000 + Math.random() * 9000);
+        },
+
+        // Ícones e botão para mostrar/ocultar passwords.
+        EYE_SHOW: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>',
+        EYE_HIDE: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65"/></svg>',
+
+        // Botão de olho para colocar dentro de um campo de password (o input tem de estar num <div class="relative"> e usar pr-10).
+        pwdEyeBtn(inputId) {
+          return `<button type="button" tabindex="-1" onclick="app.togglePwd('${inputId}', this)" aria-label="Mostrar/ocultar password" class="absolute inset-y-0 right-0 flex items-center px-3 text-gray-400 hover:text-gray-600">${this.EYE_SHOW}</button>`;
+        },
+
+        togglePwd(inputId, btn) {
+          const input = document.getElementById(inputId);
+          if (!input) return;
+          const reveal = input.type === 'password';
+          input.type = reveal ? 'text' : 'password';
+          btn.innerHTML = reveal ? this.EYE_HIDE : this.EYE_SHOW;
+        },
 
         async submitInscription() {
           const sport = document.querySelector('input[name="inscriptionSport"]:checked').value;
-          const type = document.querySelector('input[name="inscriptionType"]:checked').value;
-          const categoryEl = document.querySelector('input[name="inscCategory"]:checked');
-          const athleteId = document.getElementById('inscId').value;
+          const isPadel = sport === 'padel';
+          const selectedCats = Array.from(document.querySelectorAll('input[name="inscCategory"]:checked')).map(el => el.value);
           const accept = document.getElementById('inscAccept').checked;
-          if (!athleteId) { alert('⚠️ Seleciona o atleta'); return; }
-          if (!categoryEl) { alert('⚠️ Seleciona uma categoria'); return; }
-          if (!accept) { alert('️ Aceita o regulamento'); return; }
-          const catId = categoryEl.value;
-          const cat = this.CATEGORIES.find(c => c.id === catId);
 
-          let athlete = null, oldCatId = null;
-          for (const [cId, players] of Object.entries(this.state.categories)) {
-            const found = (players || []).find(p => p.id === athleteId);
-            if (found) { athlete = found; oldCatId = cId; break; }
-          }
-          if (!athlete) { alert('⚠️ Atleta não encontrado'); return; }
-          if (oldCatId !== catId && this.getVacancies(catId) <= 0) { alert('⚠️ Categoria completa'); return; }
+          if (selectedCats.length === 0) { alert('⚠️ Seleciona ' + (isPadel ? 'pelo menos uma categoria' : 'uma categoria')); return; }
 
-          let partnerData = null;
-          if (type === 'doubles') {
-            const partnerId = document.getElementById('inscPartnerId').value;
-            if (!partnerId) { alert('⚠️ Seleciona o parceiro'); return; }
-            if (partnerId === athleteId) { alert('⚠️ O parceiro tem de ser diferente do atleta principal'); return; }
-            const partner = Object.values(this.state.categories).flat().find(p => p.id === partnerId);
-            if (!partner) { alert('⚠️ Parceiro não encontrado'); return; }
-            partnerData = { name: partner.name };
+          const p1 = this.collectPlayerData('p1', isPadel ? '1º Jogador' : 'Jogador');
+          if (!p1) return;
+
+          let p2 = null;
+          if (isPadel) {
+            p2 = this.collectPlayerData('p2', '2º Jogador');
+            if (!p2) return;
+            if (p1.email.toLowerCase() === p2.email.toLowerCase()) { alert('⚠️ Os dois jogadores têm de ter emails diferentes'); return; }
           }
 
-          const playerName = type === 'doubles' ? `${athlete.name} & ${partnerData.name}` : athlete.name;
-          const updatedPlayer = { ...athlete, name: playerName, type, sport, partner: partnerData };
+          if (!accept) { alert('⚠️ Tens de aceitar o regulamento'); return; }
+
+          const catNames = selectedCats.map(id => this.CATEGORIES.find(c => c.id === id)?.name || id);
+          const playerName = isPadel ? `${p1.name} & ${p2.name}` : p1.name;
+
+          // Contas por email (username), PERSISTENTES entre torneios. "Novo" = ainda não tem conta.
+          // No Padel, ambos os jogadores têm conta própria (dois emails).
+          const p1NewAccount = !this.accountExists(p1.email);
+          const p2NewAccount = isPadel && !this.accountExists(p2.email);
+          const p1TempPw = p1NewAccount ? this.generateTempPassword() : null;
+          const p2TempPw = p2NewAccount ? this.generateTempPassword() : null;
 
           try {
-            // Mover o atleta (já existente) para a categoria escolhida
-            await this.updatePlayerCategoryInSupabase(athlete.id, catId, {
-              name: playerName, type, sport, partnerName: partnerData?.name || null
-            });
+            // Criar as contas persistentes de quem ainda não tem.
+            if (p1NewAccount) await this.createAccount(p1.email, { name: p1.name, nif: p1.nif, address: p1.address, phone: p1.phone }, p1TempPw);
+            if (p2NewAccount) await this.createAccount(p2.email, { name: p2.name, nif: p2.nif, address: p2.address, phone: p2.phone }, p2TempPw);
 
-            if (oldCatId && oldCatId !== catId) {
-              this.state.categories[oldCatId] = (this.state.categories[oldCatId] || []).filter(p => p.id !== athlete.id);
-              this.state.matches[oldCatId] = this.generateRoundRobin(this.state.categories[oldCatId]);
+            const createdRows = [];
+            const warnFull = [];
+            const closedCats = [];
+
+            // Inscrever no torneio ABERTO de cada categoria escolhida.
+            for (let i = 0; i < selectedCats.length; i++) {
+              const catId = selectedCats[i];
+              const cat = this.CATEGORIES.find(c => c.id === catId);
+              // Só se aceita inscrição em torneios abertos (não iniciados).
+              if (this.getTournament(catId)?.started) { closedCats.push(cat?.name || catId); continue; }
+              const alreadyThere = (this.state.categories[catId] || []).some(pl => (pl.email || '').toLowerCase() === p1.email.toLowerCase());
+              if (alreadyThere) continue;
+              if (this.getVacancies(catId) <= 0) warnFull.push(cat?.name || catId);
+              const newId = `${catId}-${Date.now()}-${i}`;
+              const newPlayer = {
+                id: newId,
+                name: playerName,
+                type: isPadel ? 'doubles' : 'single',
+                sport,
+                email: p1.email,
+                phone: p1.phone,
+                nif: p1.nif,
+                address: p1.address,
+                partner: p2 ? { name: p2.name } : null,
+                partnerEmail: p2?.email || null,
+                registeredAt: new Date().toISOString()
+              };
+              await this.addPlayerToSupabase(newPlayer, catId);
+              const players = (this.state.categories[catId] || []);
+              players.push(newPlayer);
+              this.state.categories[catId] = players;
+              this.state.matches[catId] = this.generateRoundRobin(players);
+              createdRows.push({ catId, id: newId });
             }
-            const players = (this.state.categories[catId] || []).filter(p => p.id !== athlete.id);
-            players.push(updatedPlayer);
-            this.state.categories[catId] = players;
-            this.state.matches[catId] = this.generateRoundRobin(players);
 
-            // Registar a inscrição
+            // Registar a inscrição (para a lista/exportação do admin)
             const inscription = {
               id: `insc-${Date.now()}`,
-              playerId: athlete.id,
               playerName,
-              category: catId,
-              type,
+              category: selectedCats[0],
+              categories: selectedCats.join(','),
+              type: isPadel ? 'doubles' : 'single',
               sport,
-              email: athlete.email,
-              phone: athlete.phone,
-              partnerName: partnerData?.name || null
+              name: p1.name,
+              nif: p1.nif,
+              address: p1.address,
+              email: p1.email,
+              phone: p1.phone,
+              partnerName: p2?.name || null,
+              partnerNif: p2?.nif || null,
+              partnerAddress: p2?.address || null,
+              partnerEmail: p2?.email || null,
+              partnerPhone: p2?.phone || null,
+              tempPassword: p1TempPw,
+              partnerTempPassword: p2TempPw
             };
             await this.addInscriptionToSupabase(inscription);
-            // Mensagem no chat
-            await this.sendMessage(catId, `🎉 ${playerName} juntou-se à categoria ${cat.name}!`, 'announcement');
-            this.closeInscription();
+            this.state.inscriptions.unshift({
+              id: inscription.id,
+              player_name: playerName,
+              cat_id: inscription.category,
+              categories: inscription.categories,
+              type: inscription.type,
+              sport,
+              nif: p1.nif,
+              address: p1.address,
+              email: p1.email,
+              phone: p1.phone,
+              partner_name: inscription.partnerName,
+              partner_nif: inscription.partnerNif,
+              partner_address: inscription.partnerAddress,
+              partner_email: inscription.partnerEmail,
+              partner_phone: inscription.partnerPhone,
+              temp_password: p1TempPw,
+              partner_temp_password: p2TempPw,
+              status: 'confirmed',
+              registered_at: new Date().toISOString()
+            });
+
+            // Se for um atleta autenticado, atualizar a sua participação atual.
+            if (this.currentUser?.role === 'player') {
+              this.currentUser = this.buildPlayerUser(this.currentUser.email);
+              if (this.currentUser.catId) this.currentCategory = this.currentUser.catId;
+              sessionStorage.setItem('emtpUser_v2', JSON.stringify(this.currentUser));
+            }
+
             this.renderVacanciesOverview();
-            this.showInscriptionSuccess(updatedPlayer, cat);
+            if (this.currentUser?.role === 'admin') this.render();
+
+            if (closedCats.length) {
+              alert('ℹ️ Inscrições fechadas (torneio já iniciado) em: ' + closedCats.join(', ') + '.');
+            }
+            if (warnFull.length) {
+              alert('ℹ️ Categoria(s) já no limite de vagas: ' + warnFull.join(', ') + '. O atleta fica inscrito na mesma.');
+            }
+
+            const accounts = [
+              { label: isPadel ? '1º Jogador' : 'Jogador', email: p1.email, pw: p1TempPw, isNew: p1NewAccount }
+            ];
+            if (isPadel) accounts.push({ label: '2º Jogador', email: p2.email, pw: p2TempPw, isNew: p2NewAccount });
+            this.showInscriptionSuccess(playerName, catNames.join(', '), sport, accounts);
           } catch (error) {
             console.error('Erro:', error);
-            alert('Erro ao inscrever. Tenta novamente.');
+            alert('Erro ao inscrever: ' + (error.message || error));
           }
         },
 
-        showInscriptionSuccess(player, cat) {
+        showInscriptionSuccess(playerName, catLabel, sport, accounts) {
           const container = document.getElementById('inscriptionContent');
+          // As passwords temporárias só são mostradas ao administrador (é ele que as entrega pessoalmente).
+          const newAccounts = (accounts || []).filter(a => a.isNew && a.pw);
+          const showCreds = newAccounts.length > 0 && this.currentUser?.role === 'admin';
           container.innerHTML = `
       <div class="gradient-bg p-8 text-white text-center">
         <div class="w-20 h-20 bg-white rounded-full flex items-center justify-center mx-auto mb-4 success-pop shadow-xl">
@@ -2437,50 +3174,91 @@
         <h2 class="text-2xl font-extrabold mb-1">Inscrição Confirmada!</h2>
       </div>
       <div class="p-6">
-        <div class="bg-gradient-to-r ${cat.color} rounded-xl p-5 text-white mb-4">
+        <div class="gradient-inscription rounded-xl p-5 text-white mb-4">
           <div class="flex items-center gap-3">
-            <div class="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center text-2xl font-bold">${player.name.charAt(0)}</div>
+            <div class="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center text-2xl font-bold">${(playerName || '?').charAt(0)}</div>
             <div>
-              <div class="font-bold text-lg">${player.name}</div>
-              <div class="text-sm text-white/90">${cat.icon} ${cat.name}</div>
+              <div class="font-bold text-lg">${playerName}</div>
+              <div class="text-sm text-white/90">${sport === 'padel' ? '🏓 Padel' : '🎾 Ténis'} • ${catLabel}</div>
             </div>
           </div>
         </div>
-        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-5 text-sm text-blue-900">
-          <strong>Próximos passos:</strong> Usa o separador <strong>💬 Chat</strong> para comunicar com outros atletas!
+        ${showCreds ? `
+        <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
+          <div class="text-sm font-bold text-amber-900 mb-2">🔑 Credenciais (entrega pessoalmente)</div>
+          <div class="space-y-3 text-sm">
+            ${newAccounts.map(a => `
+              <div class="border-t border-amber-100 first:border-0 first:pt-0 pt-2">
+                <div class="text-xs font-semibold text-amber-800 mb-1">${a.label}</div>
+                <div><span class="text-xs text-amber-700 block">Email (utilizador)</span><span class="font-mono font-bold">${a.email}</span></div>
+                <div><span class="text-xs text-amber-700 block">Password temporária</span><span class="font-mono font-bold">${a.pw}</span></div>
+              </div>
+            `).join('')}
+          </div>
+          <p class="text-xs text-amber-700 mt-2">Cada atleta deve alterá-la no primeiro login (Perfil → Alterar Password). Também fica disponível na lista de Inscrições.</p>
         </div>
+        ` : `
+        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-5 text-sm text-blue-900">
+          <strong>Inscrição registada!</strong> Os teus dados foram enviados. A palavra-passe de acesso será entregue pessoalmente pela organização.
+        </div>
+        `}
         <button onclick="app.closeInscription()" class="w-full btn-primary text-white px-4 py-3 rounded-lg font-bold">✓ Concluir</button>
       </div>
     `;
         },
 
-        async resetData() {
-          if (!confirm('Reiniciar TODOS os dados? Esta ação é irreversível.')) return;
-          if (!confirm('Tens a certeza? Todos os atletas, jogos e mensagens serão apagados.')) return;
+        // Abre a escolha de qual torneio reiniciar.
+        resetData() {
+          const tenisCats = this.CATEGORIES.filter(c => c.sport === 'tenis');
+          const padelCats = this.CATEGORIES.filter(c => c.sport === 'padel');
+          this.openGenericModal(`
+      <div class="p-6">
+        <div class="flex justify-between mb-4">
+          <h3 class="text-xl font-bold">🔄 Reiniciar Torneio</h3>
+          <button onclick="app.closeGenericModal()" class="text-gray-400 text-2xl leading-none">×</button>
+        </div>
+        <p class="text-sm text-gray-500 mb-4">Escolhe o torneio a reiniciar. As <strong>inscrições, jogos e resultados</strong> desse torneio são apagados e as <strong>vagas voltam a ${this.MAX_PER_CATEGORY}</strong>. As <strong>contas</strong> dos atletas são mantidas.</p>
+        <label class="block text-sm font-semibold text-gray-700 mb-1">Torneio</label>
+        <select id="resetCatSelect" class="w-full px-3 py-2 border rounded-lg mb-4">
+          <option value="all">🌐 Todos os torneios</option>
+          <optgroup label="🎾 Ténis">${tenisCats.map(c => `<option value="${c.id}">${c.icon} ${c.name}</option>`).join('')}</optgroup>
+          <optgroup label="🏆 Padel">${padelCats.map(c => `<option value="${c.id}">${c.icon} ${c.name}</option>`).join('')}</optgroup>
+        </select>
+        <div class="flex gap-2">
+          <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 rounded-lg font-semibold">Cancelar</button>
+          <button onclick="app.confirmResetTournament()" class="flex-1 btn-danger text-white px-4 py-2 rounded-lg font-semibold">Reiniciar</button>
+        </div>
+      </div>
+    `);
+        },
+
+        async confirmResetTournament() {
+          const scope = document.getElementById('resetCatSelect').value;
+          const all = scope === 'all';
+          const cat = all ? null : this.CATEGORIES.find(c => c.id === scope);
+          const label = all ? 'TODOS os torneios' : `o torneio de ${cat?.name || scope}`;
+          if (!confirm(`Reiniciar ${label}?\n\n• Inscrições, jogos e resultados apagados (vagas voltam a ${this.MAX_PER_CATEGORY}).\n• Volta ao estado ABERTO.\n• As contas dos atletas são mantidas.`)) return;
           try {
-            await sb.from('messages').delete().neq('id', '0');
-            await sb.from('matches').delete().neq('id', '0');
-            await sb.from('players').delete().neq('id', '0');
-            await sb.from('inscriptions').delete().neq('id', '0');
-            this.state = {
-              categories: {},
-              matches: {},
-              messages: { global: [] },
-              inscriptions: [],
-              previousRanking: {},
-              readMessages: {}
-            };
-            this.CATEGORIES.forEach(cat => {
-              this.state.categories[cat.id] = [];
-              this.state.matches[cat.id] = [];
-              this.state.messages[cat.id] = [];
-            });
-            this.renderVacanciesOverview();
-            alert('Dados reiniciados com sucesso!');
+            if (all) {
+              await sb.from('matches').delete().neq('id', '0');
+              await sb.from('players').delete().neq('id', '0');
+              await sb.from('inscriptions').delete().neq('id', '0');
+              await sb.from('tournaments').delete().neq('cat_id', '0');
+              await sb.from('messages').delete().neq('id', '0');
+            } else {
+              await sb.from('matches').delete().eq('cat_id', scope);
+              await sb.from('players').delete().eq('cat_id', scope);
+              await sb.from('inscriptions').delete().eq('cat_id', scope);
+              await sb.from('tournaments').delete().eq('cat_id', scope);
+              await sb.from('messages').delete().eq('channel_id', scope);
+            }
+            // accounts e player_logins NÃO são apagados — as contas persistem.
+            this.closeGenericModal();
+            alert(`Reiniciado: ${label}. As contas dos atletas foram mantidas.`);
             location.reload();
           } catch (error) {
             console.error('Erro:', error);
-            alert('Erro ao reiniciar dados.');
+            alert('Erro ao reiniciar: ' + (error.message || error));
           }
         },
 
@@ -2500,7 +3278,7 @@
           this.openGenericModal(`
       <div class="p-6">
         <div class="flex justify-between mb-4">
-          <h3 class="text-xl font-bold">Adicionar Atleta</h3>
+          <h3 class="text-xl font-bold">Adicionar Utilizador</h3>
           <button onclick="app.closeGenericModal()" class="text-gray-400 text-2xl leading-none">×</button>
         </div>
         <div class="space-y-4">
@@ -2519,7 +3297,7 @@
           <input id="newPlayerName" type="text" class="w-full px-3 py-2 border rounded-lg" placeholder="Nome">
           <div>
             <label class="block text-xs font-semibold text-gray-500 mb-1">Password inicial (o atleta pode alterar depois)</label>
-            <input id="newPlayerPassword" type="text" class="w-full px-3 py-2 border rounded-lg" value="emtp2026">
+            <div class="relative"><input id="newPlayerPassword" type="password" class="w-full px-3 py-2 pr-10 border rounded-lg" value="emtp2026">${this.pwdEyeBtn('newPlayerPassword')}</div>
           </div>
           <div id="newPlayerError" class="hidden text-sm text-red-600 font-semibold"></div>
           <div class="flex gap-2">
@@ -2559,7 +3337,7 @@
           };
           try {
             await this.addPlayerToSupabase(newPlayer, catId);
-            await this.createPlayerCredentials(newId, password);
+            await this.createAccount(email, { name, nif: '', address: '', phone: '' }, password);
             const players = this.state.categories[catId] || [];
             players.push(newPlayer);
             this.state.categories[catId] = players;
@@ -2603,6 +3381,32 @@
           } catch (error) {
             console.error('Erro:', error);
             alert('Erro ao remover atleta.');
+          }
+        },
+
+        // Remove a participação de um atleta SÓ nesta categoria (o torneio em aberto dessa categoria).
+        // Não apaga a conta; o atleta pode continuar inscrito noutras categorias.
+        async removeParticipation(catId, playerId) {
+          const player = this.state.categories[catId]?.find(p => p.id === playerId);
+          const cat = this.CATEGORIES.find(c => c.id === catId);
+          if (!player) return;
+          const isSelf = this.currentUser.role === 'player' && this.currentUser.playerId === playerId;
+          if (!confirm(`Remover a participação de "${player.name}" na categoria ${cat?.name || catId}?`)) return;
+          try {
+            await this.removePlayerFromSupabase(catId, playerId);
+            this.state.categories[catId] = (this.state.categories[catId] || []).filter(p => p.id !== playerId);
+            this.state.matches[catId] = this.generateRoundRobin(this.state.categories[catId]);
+            this.renderVacanciesOverview();
+            if (isSelf) {
+              // O atleta removeu-se a si próprio da categoria em que estava a ver a app.
+              alert('Participação removida. Vais voltar ao ecrã inicial.');
+              await this.logout();
+              return;
+            }
+            this.render();
+          } catch (error) {
+            console.error('Erro:', error);
+            alert('Erro ao remover participação: ' + (error.message || error));
           }
         },
 
@@ -2651,16 +3455,14 @@
             p2: document.getElementById(`s${i}p2`).value === '' ? null : parseInt(document.getElementById(`s${i}p2`).value)
           }));
           match.sets = sets;
-          let s1 = 0, s2 = 0;
-          sets.forEach(s => { if (s.p1 !== null && s.p2 !== null) { if (s.p1 > s.p2) s1++; else s2++; } });
-          match.completed = (s1 === 2 || s2 === 2);
+          match.completed = this.isMatchComplete(match);
           try {
             await this.addMatchToSupabase(match, catId);
             this.closeGenericModal();
             this.render();
           } catch (error) {
             console.error('Erro:', error);
-            alert('Erro ao guardar resultado.');
+            alert('Erro ao guardar resultado: ' + (error.message || error));
           }
         },
 
@@ -2721,6 +3523,14 @@
 
         async savePlayerResult(catId, matchId) {
           const match = this.state.matches[catId].find(m => m.id === matchId);
+          // Regras: só o próprio jogo, não pode reescrever um já inserido (tem de contestar) e dentro do prazo.
+          if (this.currentUser.role === 'player' && match.p1 !== this.currentUser.playerId && match.p2 !== this.currentUser.playerId) {
+            alert('⚠️ Só podes inserir o resultado dos teus jogos.'); return;
+          }
+          if (match.completed) { alert('⚠️ Este resultado já foi inserido. Se estiver errado, usa "Contestar resultado".'); return; }
+          if (this.currentUser.role === 'player' && this.isJornadaPast(catId, match.jornada)) {
+            alert('⚠️ O prazo desta jornada já terminou. Só o admin pode inserir o resultado — usa "Contestar resultado" para falar com o admin.'); return;
+          }
           const sets = [0, 1, 2].map(i => ({
             p1: document.getElementById(`s${i}p1`).value === '' ? null : parseInt(document.getElementById(`s${i}p1`).value),
             p2: document.getElementById(`s${i}p2`).value === '' ? null : parseInt(document.getElementById(`s${i}p2`).value)
@@ -2736,9 +3546,7 @@
           }
           match.sets = sets;
           match.superTB = superTB;
-          let s1 = 0, s2 = 0;
-          sets.forEach(s => { if (s.p1 !== null && s.p2 !== null) { if (s.p1 > s.p2) s1++; else s2++; } });
-          match.completed = (s1 === 2 || s2 === 2);
+          match.completed = this.isMatchComplete(match);
           if (!match.completed) {
             alert('O resultado deve ter um vencedor (2 sets ganhos).');
             return;
@@ -2759,23 +3567,116 @@
             }, 100);
           } catch (error) {
             console.error('Erro:', error);
-            alert('Erro ao submeter resultado.');
+            alert('Erro ao submeter resultado: ' + (error.message || error));
+          }
+        },
+
+        // O jogador contesta um resultado já inserido → envia mensagem ao admin (chat da categoria).
+        openContestModal(catId, matchId) {
+          const match = this.state.matches[catId].find(m => m.id === matchId);
+          const players = this.state.categories[catId];
+          const p1 = players.find(p => p.id === match.p1);
+          const p2 = players.find(p => p.id === match.p2);
+          const scores = match.sets.filter(s => s.p1 !== null).map(s => `${s.p1}-${s.p2}`).join(' ');
+          this.openGenericModal(`
+      <div class="p-6">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <div class="text-xs font-bold text-amber-600 uppercase">⚠️ Contestar Resultado</div>
+            <h3 class="text-xl font-bold text-gray-900">Jornada ${match.jornada}</h3>
+          </div>
+          <button onclick="app.closeGenericModal()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+        </div>
+        <div class="bg-gray-50 border rounded-xl p-3 mb-4 text-sm">
+          <div class="font-semibold">${p1.name} vs ${p2.name}</div>
+          <div class="text-gray-500">Resultado inserido: <strong>${scores || '—'}</strong></div>
+        </div>
+        <p class="text-xs text-gray-500 mb-2">A tua contestação é enviada ao admin (no chat da categoria). Só o admin pode corrigir o resultado.</p>
+        <textarea id="contestText" rows="3" class="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-amber-400 outline-none text-sm" placeholder="Ex: O resultado do 2º set está trocado, foi 6-4 para mim."></textarea>
+        <div class="flex gap-2 mt-4">
+          <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">Cancelar</button>
+          <button onclick="app.submitContest('${catId}', '${matchId}')" class="flex-1 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg font-semibold">Enviar Contestação</button>
+        </div>
+      </div>
+    `);
+        },
+
+        async submitContest(catId, matchId) {
+          const text = document.getElementById('contestText').value.trim();
+          if (!text) { alert('Escreve o motivo da contestação.'); return; }
+          const match = this.state.matches[catId].find(m => m.id === matchId);
+          const players = this.state.categories[catId];
+          const p1 = players.find(p => p.id === match.p1);
+          const p2 = players.find(p => p.id === match.p2);
+          const scores = match.sets.filter(s => s.p1 !== null).map(s => `${s.p1}-${s.p2}`).join(' ');
+          const cat = this.CATEGORIES.find(c => c.id === catId);
+          const dmChannel = `dm:${(this.currentUser.email || '').toLowerCase()}`;
+          try {
+            await this.sendMessage(dmChannel, `⚠️ CONTESTAÇÃO — ${cat?.name || catId}, Jornada ${match.jornada}: ${p1.name} vs ${p2.name} (${scores}). Motivo: ${text}`, 'announcement');
+            this.closeGenericModal();
+            // Leva o atleta ao canal privado com os admins para continuar a conversa.
+            this.currentChatChannel = dmChannel;
+            this.switchTab('chat');
+            alert('Contestação enviada em mensagem privada aos admins. Podes continuar a conversa no canal 🔒 Admins.');
+          } catch (error) {
+            console.error('Erro:', error);
+            alert('Erro ao enviar contestação: ' + (error.message || error));
           }
         },
 
         renderPlayoffs() {
-          const isAdmin = this.currentUser.role === 'admin';
-          return `
-      <h2 class="text-2xl font-extrabold mb-4">Playoffs</h2>
+          const catId = this.currentCategory;
+          const cat = this.CATEGORIES.find(c => c.id === catId);
+          const started = !!this.getTournament(catId)?.started;
+          const matches = this.state.matches[catId] || [];
+          const groupDone = matches.length > 0 && matches.every(m => m.completed);
+          const ranking = this.getRanking(catId);
+          const top4 = ranking.slice(0, 4);
+          const nm = p => p ? p.name : '—';
+          const tabs = `
       <div class="flex gap-2 mb-4 flex-wrap">
         ${this.CATEGORIES.map(c => `
           <button onclick="app.currentCategory='${c.id}'; app.render()" class="px-4 py-2 rounded-lg font-semibold text-sm ${this.currentCategory === c.id ? 'bg-emerald-600 text-white' : 'bg-white border'}">${c.icon} ${c.name}</button>
         `).join('')}
-      </div>
-      <div class="bg-white rounded-2xl p-8 text-center text-gray-500">
-        <div class="text-5xl mb-3"></div>
-        <p>Playoffs disponíveis após fase de grupos</p>
-      </div>
+      </div>`;
+          let body;
+          if (!started) {
+            body = `<div class="bg-white rounded-2xl p-8 text-center text-gray-500"><div class="text-5xl mb-3">📅</div><p>Torneio ainda não iniciado nesta categoria.</p></div>`;
+          } else if (top4.length < 4) {
+            body = `<div class="bg-white rounded-2xl p-8 text-center text-gray-500"><div class="text-5xl mb-3">👥</div><p>São precisos pelo menos 4 participantes para os playoffs.</p></div>`;
+          } else {
+            const matchCard = (title, a, b, color) => `
+        <div class="bg-white rounded-2xl shadow-sm border overflow-hidden">
+          <div class="bg-gradient-to-r ${color} p-3 text-white text-sm font-bold">${title}</div>
+          <div class="p-4 space-y-2">
+            <div class="flex items-center justify-between"><span class="font-semibold">${nm(a)}</span></div>
+            <div class="text-center text-xs text-gray-400">vs</div>
+            <div class="flex items-center justify-between"><span class="font-semibold">${nm(b)}</span></div>
+          </div>
+        </div>`;
+            body = `
+        <div class="${groupDone ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'} border rounded-xl p-3 mb-4 text-sm ${groupDone ? 'text-emerald-800' : 'text-amber-800'}">
+          ${groupDone ? '✅ Fase de grupos concluída — apuramento final.' : '⏳ Fase de grupos a decorrer — apuramento provisório (posições podem mudar).'}
+        </div>
+        <div class="bg-white rounded-2xl shadow-sm border p-4 mb-4">
+          <div class="text-xs font-bold text-gray-400 uppercase mb-2">Apurados (Top 4)</div>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+            ${top4.map((p, i) => `<div class="p-3 rounded-xl ${i === 0 ? 'bg-yellow-100' : 'bg-gray-50'} text-center"><div class="text-lg font-extrabold">${i + 1}º</div><div class="text-sm font-semibold truncate">${p.name}</div></div>`).join('')}
+          </div>
+        </div>
+        <div class="grid md:grid-cols-2 gap-4 mb-4">
+          ${matchCard('Meia-final 1 (1º vs 4º)', top4[0], top4[3], 'from-amber-500 to-amber-700')}
+          ${matchCard('Meia-final 2 (2º vs 3º)', top4[1], top4[2], 'from-amber-500 to-amber-700')}
+        </div>
+        <div class="grid md:grid-cols-2 gap-4">
+          ${matchCard('🏆 Grande Final', { name: 'Vencedor MF1' }, { name: 'Vencedor MF2' }, 'from-red-500 to-red-700')}
+          ${matchCard('3º/4º Lugar', { name: 'Perdedor MF1' }, { name: 'Perdedor MF2' }, 'from-gray-400 to-gray-600')}
+        </div>`;
+          }
+          return `
+      <div class="mb-4 flex items-center gap-2"><h2 class="text-2xl font-extrabold">Playoffs</h2><span class="text-gray-400 font-semibold">${cat.icon} ${cat.name}</span></div>
+      ${tabs}
+      ${body}
     `;
         },
 
@@ -2804,7 +3705,7 @@
               <div class="regulamento-number">2</div>
               <h3 class="text-xl font-extrabold">Formato e Calendário</h3>
             </div>
-            <p>Fase de grupos (7 jornadas) + Playoffs (Top 4).</p>
+            <p>Fase de grupos em formato de todos-contra-todos (até 7 jornadas). O vencedor é o 1º classificado da tabela.</p>
           </div>
           <div class="regulamento-section pl-5">
             <div class="flex items-center gap-3 mb-3">

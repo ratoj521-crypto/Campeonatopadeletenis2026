@@ -15,8 +15,27 @@ create table if not exists players (
   sport text not null,              -- 'tenis' | 'padel'
   email text,
   phone text,
+  nif text,
+  address text,
   partner_name text,
+  partner_email text,               -- email do 2º jogador (Padel), que também tem conta
   registered_at timestamptz not null default now()
+);
+
+-- Colunas acrescentadas (bases de dados já existentes; idempotente).
+alter table players add column if not exists nif text;
+alter table players add column if not exists address text;
+alter table players add column if not exists partner_email text;
+
+-- Contas (pessoas registadas na app). PERSISTEM ao reiniciar torneios.
+-- A participação num torneio (linha em `players`) é que é limpa no reinício.
+create table if not exists accounts (
+  email text primary key,
+  name text,
+  nif text,
+  address text,
+  phone text,
+  created_at timestamptz not null default now()
 );
 
 create table if not exists matches (
@@ -58,14 +77,36 @@ create table if not exists inscriptions (
   player_id text,
   player_name text not null,
   cat_id text not null,
+  categories text,                   -- lista de categorias (Padel pode ter várias), separadas por vírgula
   type text not null,
   sport text not null,
+  nif text,                          -- NIF do jogador 1
+  address text,                      -- morada do jogador 1
   email text,
   phone text,
-  partner_name text,
+  partner_name text,                 -- jogador 2 (Padel)
+  partner_nif text,
+  partner_address text,
+  partner_email text,
+  partner_phone text,
+  temp_password text,                -- password temporária do jogador 1 (o admin entrega-a; o atleta altera no 1º login)
+  partner_temp_password text,        -- password temporária do jogador 2 (Padel)
   status text not null default 'confirmed',
   registered_at timestamptz not null default now()
 );
+
+-- Colunas acrescentadas (para bases de dados já existentes; idempotente).
+alter table inscriptions add column if not exists categories text;
+alter table inscriptions add column if not exists nif text;
+alter table inscriptions add column if not exists address text;
+alter table inscriptions add column if not exists partner_nif text;
+alter table inscriptions add column if not exists partner_address text;
+alter table inscriptions add column if not exists partner_email text;
+alter table inscriptions add column if not exists partner_phone text;
+alter table inscriptions add column if not exists temp_password text;
+alter table inscriptions add column if not exists partner_temp_password text;
+-- player_id deixa de ser usado (inscrição pública sem login); torna-se opcional.
+alter table inscriptions alter column player_id drop not null;
 
 create table if not exists playoffs (
   cat_id text primary key,
@@ -73,6 +114,15 @@ create table if not exists playoffs (
   semi2 jsonb,
   final jsonb,
   third jsonb
+);
+
+-- Torneio por categoria: datas e estado (iniciado ou não).
+create table if not exists tournaments (
+  cat_id text primary key,
+  start_date date,
+  end_date date,
+  started boolean not null default false,
+  updated_at timestamptz not null default now()
 );
 
 -- Perfis ligados ao Supabase Auth (usado para saber quem é admin)
@@ -95,6 +145,8 @@ alter table messages enable row level security;
 alter table inscriptions enable row level security;
 alter table playoffs enable row level security;
 alter table profiles enable row level security;
+alter table tournaments enable row level security;
+alter table accounts enable row level security;
 
 -- profiles: qualquer utilizador autenticado só lê o seu próprio perfil
 drop policy if exists "read own profile" on profiles;
@@ -128,8 +180,11 @@ create policy "public write players" on players for insert with check (true);
 create policy "public update players" on players for update using (true);
 create policy "admin delete players" on players for delete using (is_admin());
 
--- matches: leitura pública (todos veem resultados), mas escrever/editar/apagar
--- resultados passa a exigir admin (já era 100% admin-only na interface).
+-- matches: leitura pública. A escrita/atualização de resultados é PÚBLICA porque
+-- os atletas (que reportam o resultado do seu jogo) não têm sessão real do Supabase
+-- Auth — as regras (só o próprio jogo, dentro do prazo, contestar em vez de editar)
+-- são aplicadas no cliente, como já acontece com players/messages/inscriptions.
+-- Apagar jogos continua a exigir admin.
 drop policy if exists "public read matches" on matches;
 drop policy if exists "public write matches" on matches;
 drop policy if exists "public update matches" on matches;
@@ -138,8 +193,8 @@ drop policy if exists "admin write matches" on matches;
 drop policy if exists "admin update matches" on matches;
 drop policy if exists "admin delete matches" on matches;
 create policy "public read matches" on matches for select using (true);
-create policy "admin write matches" on matches for insert with check (is_admin());
-create policy "admin update matches" on matches for update using (is_admin());
+create policy "public write matches" on matches for insert with check (true);
+create policy "public update matches" on matches for update using (true);
 create policy "admin delete matches" on matches for delete using (is_admin());
 
 -- messages: continuam com escrita pública (chat/reagendamentos dos atletas,
@@ -172,6 +227,27 @@ drop policy if exists "public update playoffs" on playoffs;
 create policy "public read playoffs" on playoffs for select using (true);
 create policy "public write playoffs" on playoffs for insert with check (true);
 create policy "public update playoffs" on playoffs for update using (true);
+
+-- tournaments: leitura pública (todos veem as datas), mas iniciar/alterar o torneio é só admin.
+drop policy if exists "public read tournaments" on tournaments;
+drop policy if exists "admin write tournaments" on tournaments;
+drop policy if exists "admin update tournaments" on tournaments;
+drop policy if exists "admin delete tournaments" on tournaments;
+create policy "public read tournaments" on tournaments for select using (true);
+create policy "admin write tournaments" on tournaments for insert with check (is_admin());
+create policy "admin update tournaments" on tournaments for update using (is_admin());
+create policy "admin delete tournaments" on tournaments for delete using (is_admin());
+
+-- accounts: leitura/criação/atualização públicas (registo feito pelo próprio,
+-- sem sessão Supabase). Apagar contas é só admin. As contas persistem ao reiniciar.
+drop policy if exists "public read accounts" on accounts;
+drop policy if exists "public write accounts" on accounts;
+drop policy if exists "public update accounts" on accounts;
+drop policy if exists "admin delete accounts" on accounts;
+create policy "public read accounts" on accounts for select using (true);
+create policy "public write accounts" on accounts for insert with check (true);
+create policy "public update accounts" on accounts for update using (true);
+create policy "admin delete accounts" on accounts for delete using (is_admin());
 
 -- ---------- CREDENCIAIS DOS ATLETAS (email + password) ----------
 -- Cada atleta passa a ter um email gerado (nome.sobrenome@emtp.com, com
@@ -290,6 +366,129 @@ grant execute on function admin_reset_player_password(text, text) to anon, authe
 grant execute on function login_player(text, text) to anon, authenticated;
 -- verify_player_password fica só para uso interno das outras funções
 -- (não é preciso conceder execute a anon).
+
+-- ---------- LOGINS POR EMAIL (cada pessoa = um email/username) ----------
+-- Passa a haver uma conta por EMAIL (não por linha de jogador). Assim, numa
+-- dupla de Padel os dois jogadores têm conta própria (dois emails), ambas a
+-- apontar para a mesma "entrada" de competição (player_id). Cada um tem a sua
+-- própria password e altera-a de forma independente.
+create table if not exists player_logins (
+  email text primary key,
+  password_hash text not null,
+  player_id text not null,
+  updated_at timestamptz not null default now()
+);
+
+alter table player_logins enable row level security;
+-- Sem policies = só as funções security-definer abaixo acedem.
+
+-- A conta (login) passa a ser independente da participação num torneio: só
+-- guarda email + password. Assim, quando se reinicia (limpa participações), a
+-- conta mantém-se e a pessoa não precisa de se registar outra vez.
+alter table player_logins alter column player_id drop not null;
+
+-- Cria a conta de um email (não sobrescreve se já existir).
+create or replace function create_login(p_email text, p_password text)
+returns void
+language sql
+security definer
+set search_path = public, extensions
+as $$
+  insert into player_logins (email, password_hash)
+  values (lower(p_email), crypt(p_password, gen_salt('bf')))
+  on conflict (email) do nothing;
+$$;
+
+-- Login por email: devolve o email (em minúsculas) se a password bater certo (senão null).
+create or replace function login_player_v2(p_email text, p_password text)
+returns text
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_hash text;
+begin
+  select password_hash into v_hash from player_logins where email = lower(p_email);
+  if v_hash is null then return null; end if;
+  if v_hash = crypt(p_password, v_hash) then return lower(p_email); else return null; end if;
+end;
+$$;
+
+-- O próprio utilizador muda a sua password (tem de indicar a atual).
+create or replace function change_login_password(p_email text, p_old_password text, p_new_password text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare v_hash text;
+begin
+  select password_hash into v_hash from player_logins where email = lower(p_email);
+  if v_hash is null or v_hash <> crypt(p_old_password, v_hash) then return false; end if;
+  update player_logins set password_hash = crypt(p_new_password, gen_salt('bf')), updated_at = now()
+    where email = lower(p_email);
+  return true;
+end;
+$$;
+
+-- O admin repõe a password de um email (sem saber a antiga).
+create or replace function admin_reset_login(p_email text, p_new_password text)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not exists (select 1 from profiles where id = auth.uid() and role = 'admin') then
+    raise exception 'Apenas o administrador pode repor passwords.';
+  end if;
+  update player_logins set password_hash = crypt(p_new_password, gen_salt('bf')), updated_at = now()
+    where email = lower(p_email);
+end;
+$$;
+
+-- O admin apaga uma conta por completo: login, participações e dados da conta.
+create or replace function admin_delete_account(p_email text)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not exists (select 1 from profiles where id = auth.uid() and role = 'admin') then
+    raise exception 'Apenas o administrador pode apagar contas.';
+  end if;
+  delete from player_logins where email = lower(p_email);
+  delete from players where lower(email) = lower(p_email) or lower(partner_email) = lower(p_email);
+  delete from accounts where email = lower(p_email);
+end;
+$$;
+
+drop function if exists create_login(text, text, text);
+grant execute on function create_login(text, text) to anon, authenticated;
+grant execute on function admin_delete_account(text) to authenticated;
+grant execute on function login_player_v2(text, text) to anon, authenticated;
+grant execute on function change_login_password(text, text, text) to anon, authenticated;
+grant execute on function admin_reset_login(text, text) to anon, authenticated;
+
+-- Migração: importa as credenciais antigas (player_credentials, por player_id)
+-- para o novo modelo por email, usando o email de cada jogador. Idempotente.
+insert into player_logins (email, password_hash, player_id)
+select lower(p.email), pc.password_hash, pc.player_id
+from player_credentials pc
+join players p on p.id = pc.player_id
+where p.email is not null
+on conflict (email) do nothing;
+
+-- Migração: cria as contas (accounts) a partir dos jogadores já existentes,
+-- para que quem já tinha participação passe a ter conta persistente. Idempotente.
+insert into accounts (email, name, nif, address, phone)
+select distinct on (lower(p.email)) lower(p.email), p.name, p.nif, p.address, p.phone
+from players p
+where p.email is not null
+order by lower(p.email), p.registered_at
+on conflict (email) do nothing;
 
 -- ---------- REALTIME ----------
 -- Necessário para que app.setupRealtime() receba INSERT/UPDATE ao vivo.
