@@ -56,6 +56,15 @@ create table if not exists matches (
   updated_at timestamptz not null default now()
 );
 
+-- Colunas de formato dos jogos (acrescentadas; idempotente e retrocompatível).
+-- Jogos já existentes ficam com phase='group', leg=1 e group_idx nulo — ou seja,
+-- exatamente o que eram antes: fase de grupos, uma mão, grupo único.
+alter table matches add column if not exists phase text not null default 'group';  -- 'group' | 'final'
+alter table matches add column if not exists group_idx int;                        -- 0 ou 1 quando há dois grupos; null se grupo único
+alter table matches add column if not exists leg int not null default 1;           -- 1ª ou 2ª mão
+alter table matches add column if not exists round_idx int;                        -- ronda do quadro final (0 = primeira)
+alter table matches add column if not exists label text;                           -- 'Meia-final 1', 'Finalíssima', '3º/4º lugar', ...
+
 create table if not exists messages (
   id text primary key,
   channel_id text not null,          -- 'global' ou id de categoria
@@ -124,6 +133,20 @@ create table if not exists tournaments (
   started boolean not null default false,
   updated_at timestamptz not null default now()
 );
+
+-- Formato do torneio por categoria (acrescentado; idempotente e retrocompatível).
+-- Os valores por defeito reproduzem exatamente o comportamento antigo:
+-- um grupo único, todos-contra-todos a uma mão e sem fase final.
+alter table tournaments add column if not exists legs int not null default 1;                 -- 1 = uma mão, 2 = duas mãos (fase de grupos)
+alter table tournaments add column if not exists num_groups int not null default 1;            -- 1 ou 2 grupos
+alter table tournaments add column if not exists qualifiers_per_group int not null default 2;  -- quantos passam de cada grupo
+alter table tournaments add column if not exists final_legs int not null default 1;            -- 1 = fase final a uma mão, 2 = ida e volta
+alter table tournaments add column if not exists final_type text not null default 'none';      -- 'none' | 'bracket' | 'minigroup' | 'single'
+alter table tournaments add column if not exists groups jsonb;                                  -- [[playerId,...], [playerId,...]] — sorteio dos grupos
+alter table tournaments add column if not exists final_seeds jsonb;                             -- ordem de apuramento fixada ao gerar a fase final
+alter table tournaments add column if not exists final_started boolean not null default false;  -- fase final já gerada
+alter table tournaments add column if not exists planned_jornadas int;                          -- total de jornadas previstas (grupos + fase final)
+alter table tournaments add column if not exists capacity int;                                  -- lotação da categoria (null = valor por defeito da app)
 
 -- Perfis ligados ao Supabase Auth (usado para saber quem é admin)
 create table if not exists profiles (

@@ -575,7 +575,205 @@
       const SUPABASE_URL = 'https://lxcwhiukhyjlxhpnhatb.supabase.co';
       const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx4Y3doaXVraHlqbHhocG5oYXRiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ2NDAzNTMsImV4cCI6MjEwMDIxNjM1M30.M1jTL8p1mi2Bn02cU7O89LdNlrKArDM97FMW-AdAyZo';
 
-      const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      // ============================================
+      // MODO DEMO (?demo=1) — base de dados em memória
+      // ============================================
+      // Abrir a app com ?demo=1 no fim do endereço liga uma base de dados falsa,
+      // guardada só no browser (localStorage). Serve para experimentar formatos de
+      // torneio, resultados e fase final sem tocar no Supabase de produção.
+      // Sem ?demo=1 a app comporta-se exatamente como antes.
+      const DEMO_MODE = new URLSearchParams(location.search).has('demo');
+      const DEMO_KEY = 'emtp-demo-db';
+      const DEMO_PK = {
+        players: 'id', matches: 'id', messages: 'id', inscriptions: 'id',
+        tournaments: 'cat_id', accounts: 'email', playoffs: 'cat_id', profiles: 'id'
+      };
+
+      // Inscritos de exemplo, com números diferentes por categoria para dar
+      // para testar os vários formatos (grupo único, duas mãos, dois grupos).
+      function demoSeed() {
+        const nomes = ['Silva', 'Costa', 'Pinho', 'Reis', 'Alves', 'Dias', 'Matos', 'Cruz', 'Nunes',
+          'Faria', 'Lima', 'Sousa', 'Teles', 'Rocha', 'Braga', 'Melo', 'Pires', 'Amaral'];
+        // `lot` = lotação que o admin teria definido para essa categoria.
+        const plano = [
+          { cat: 'tenis-senior-masc', n: 8, lot: 8, sport: 'tenis', type: 'single' },
+          { cat: 'tenis-senior-fem', n: 4, lot: 8, sport: 'tenis', type: 'single' },
+          { cat: 'padel-M5', n: 5, lot: 8, sport: 'padel', type: 'doubles' },
+          { cat: 'padel-M4', n: 11, lot: 12, sport: 'padel', type: 'doubles' },
+          { cat: 'padel-M3', n: 12, lot: 16, sport: 'padel', type: 'doubles' },
+          { cat: 'padel-F45', n: 6, lot: 8, sport: 'padel', type: 'doubles' },
+          { cat: 'padel-MX', n: 3, lot: 8, sport: 'padel', type: 'doubles' }
+        ];
+        const players = [], accounts = [], tournaments = [];
+        plano.forEach(({ cat, n, lot, sport, type }) => {
+          tournaments.push({
+            cat_id: cat, start_date: '2026-09-14', end_date: '2026-11-15', started: false,
+            legs: 1, num_groups: 1, qualifiers_per_group: 2, final_legs: 1, final_type: 'none',
+            groups: null, final_seeds: null, final_started: false, planned_jornadas: null,
+            capacity: lot, updated_at: new Date().toISOString()
+          });
+          for (let i = 0; i < n; i++) {
+            const a = nomes[i % nomes.length], b = nomes[(i + 5) % nomes.length];
+            const email = `${cat}-${i + 1}@demo.pt`;
+            players.push({
+              id: `${cat}-demo${i + 1}`, cat_id: cat,
+              name: type === 'doubles' ? `${a}/${b} ${i + 1}` : `${a} ${b} ${i + 1}`,
+              type, sport, email, phone: '9' + String(100000000 + i),
+              nif: String(200000000 + i), address: `Rua Demo ${i + 1}, Oliveira do Bairro`,
+              partner_name: type === 'doubles' ? `${b} ${i + 1}` : null,
+              partner_email: type === 'doubles' ? `${cat}-${i + 1}-p2@demo.pt` : null,
+              registered_at: new Date(2026, 7, 1 + i).toISOString()
+            });
+            accounts.push({ email, name: `Demo ${i + 1}`, nif: String(200000000 + i), address: '', phone: '' });
+          }
+        });
+        return {
+          players, accounts, tournaments, matches: [], messages: [], inscriptions: [],
+          playoffs: [], profiles: [{ id: 'demo-admin', role: 'admin' }]
+        };
+      }
+
+      function createDemoClient() {
+        let db;
+        try { db = JSON.parse(localStorage.getItem(DEMO_KEY)) || demoSeed(); } catch (e) { db = demoSeed(); }
+        const save = () => { try { localStorage.setItem(DEMO_KEY, JSON.stringify(db)); } catch (e) { /* sem espaço: fica só em memória */ } };
+        save();
+        const ok = data => Promise.resolve({ data, error: null });
+
+        function query(table) {
+          const rows = () => (db[table] = db[table] || []);
+          const filters = [];
+          const hit = r => filters.every(f => f.op === 'eq'
+            ? String(r[f.col]) === String(f.val)
+            : String(r[f.col]) !== String(f.val));
+          const api = {
+            _select: false, _single: false, _order: null, _action: null,
+            select() { api._select = true; return api; },
+            order(col, opts) { api._order = { col, asc: !opts || opts.ascending !== false }; return api; },
+            eq(col, val) { filters.push({ col, op: 'eq', val }); return api; },
+            neq(col, val) { filters.push({ col, op: 'neq', val }); return api; },
+            single() { api._single = true; return api; },
+            insert(vals) {
+              api._action = () => {
+                const add = vals.map(v => ({ ...v }));
+                add.forEach(v => { rows().push(v); notify(table, 'INSERT', v); });
+                return add;
+              };
+              return api;
+            },
+            upsert(vals) {
+              api._action = () => {
+                const pk = DEMO_PK[table] || 'id';
+                return vals.map(v => {
+                  const i = rows().findIndex(r => String(r[pk]) === String(v[pk]));
+                  if (i >= 0) { rows()[i] = { ...rows()[i], ...v }; return rows()[i]; }
+                  rows().push({ ...v });
+                  return rows()[rows().length - 1];
+                });
+              };
+              return api;
+            },
+            update(vals) {
+              api._action = () => {
+                const changed = rows().filter(hit);
+                changed.forEach(r => Object.assign(r, vals));
+                return changed;
+              };
+              return api;
+            },
+            delete() {
+              api._action = () => {
+                const gone = rows().filter(hit);
+                db[table] = rows().filter(r => !hit(r));
+                return gone;
+              };
+              return api;
+            },
+            then(res, rej) { return run().then(res, rej); }
+          };
+          function run() {
+            try {
+              if (api._action) { const out = api._action(); save(); return ok(out); }
+              let out = rows().filter(hit).map(r => ({ ...r }));
+              if (api._order) {
+                const { col, asc } = api._order;
+                out.sort((a, b) => (a[col] > b[col] ? 1 : a[col] < b[col] ? -1 : 0) * (asc ? 1 : -1));
+              }
+              return ok(api._single ? (out[0] || null) : out);
+            } catch (e) {
+              return Promise.resolve({ data: null, error: e });
+            }
+          }
+          return api;
+        }
+
+        // Realtime simulado. Só se notificam INSERTs em `messages`, que é o caso em
+        // que a app conta com o realtime para se atualizar (sendMessage grava e espera
+        // que o evento traga a mensagem de volta). Para `players`/`matches` a app já
+        // atualiza o estado local diretamente, e notificar aí provocaria recargas a
+        // meio dos fluxos (o sorteio grava dezenas de jogos seguidos).
+        const subs = [];
+        const notify = (table, event, row) => {
+          setTimeout(() => {
+            subs.filter(x => x.table === table && (x.event === '*' || x.event === event))
+              .forEach(x => { try { x.cb({ new: row, eventType: event }); } catch (e) { console.error(e); } });
+          }, 0);
+        };
+        const canal = {
+          on(_tipo, opts, cb) {
+            if (opts && opts.table === 'messages') subs.push({ table: opts.table, event: opts.event || '*', cb });
+            return canal;
+          },
+          subscribe() { return canal; }
+        };
+
+        return {
+          from: query,
+          channel: () => canal,
+          auth: {
+            // No modo demo qualquer email entra como administrador com a password "demo".
+            signInWithPassword: ({ password }) => Promise.resolve(password === 'demo'
+              ? { data: { user: { id: 'demo-admin' } }, error: null }
+              : { data: null, error: { message: 'No modo demo a password é: demo' } }),
+            signOut: () => Promise.resolve({ error: null })
+          },
+          rpc: (fn, args) => {
+            if (fn === 'login_player_v2') {
+              return ok(args.p_password === 'demo' ? String(args.p_email).toLowerCase() : null);
+            }
+            if (fn === 'admin_delete_account') {
+              const e = String(args.p_email).toLowerCase();
+              db.accounts = (db.accounts || []).filter(a => String(a.email).toLowerCase() !== e);
+              db.players = (db.players || []).filter(pl =>
+                String(pl.email || '').toLowerCase() !== e && String(pl.partner_email || '').toLowerCase() !== e);
+              save();
+              return ok(null);
+            }
+            if (fn === 'change_login_password') return ok(true);
+            return ok(null);   // create_login, admin_reset_login, …
+          }
+        };
+      }
+
+      const sb = DEMO_MODE ? createDemoClient() : window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+      // Reposição dos dados de demonstração (só existe no modo demo).
+      function demoReset() {
+        localStorage.removeItem(DEMO_KEY);
+        location.reload();
+      }
+
+      if (DEMO_MODE) {
+        window.addEventListener('DOMContentLoaded', () => {
+          const aviso = document.createElement('div');
+          aviso.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:9999;background:#b45309;color:#fff;' +
+            'font:600 12px/1.4 system-ui,sans-serif;padding:8px 12px;display:flex;gap:12px;align-items:center;justify-content:center;flex-wrap:wrap';
+          aviso.innerHTML = '🧪 <strong>MODO DEMO</strong> — dados falsos guardados só neste browser. ' +
+            'O Supabase de produção NÃO é usado. Password de acesso: <strong>demo</strong>. ' +
+            '<button onclick="demoReset()" style="background:#fff;color:#b45309;border-radius:6px;padding:2px 10px;font-weight:700">Repor dados</button>';
+          document.body.appendChild(aviso);
+        });
+      }
 
       // ============================================
       // APLICAÇÃO PRINCIPAL
@@ -590,6 +788,8 @@
           { id: 'padel-F45', name: 'F4/5', icon: '🏆', color: 'from-pink-500 to-rose-700', sport: 'padel', desc: 'Feminino 4ª/5ª Categoria' },
           { id: 'padel-MX', name: 'MX', icon: '🏆', color: 'from-indigo-500 to-indigo-700', sport: 'padel', desc: 'Misto' }
         ],
+        // Lotação por defeito de uma categoria. O admin pode definir outra por categoria
+        // (Calendário → Datas e Lotação), guardada em tournaments.capacity.
         MAX_PER_CATEGORY: 8,
         SCHEDULE: [
           { jornada: 1, week: '14 a 20 Setembro', phase: 'group' },
@@ -618,9 +818,19 @@
         },
         currentUser: null,
         pendingAction: null,
+        pendingDraw: null,      // configuração escolhida no passo 1 do sorteio
+        pendingFinal: null,     // apurados fixados no passo 1 da fase final
+        pendingReset: null,     // âmbito escolhido no passo 1 do reinício
         currentTab: 'dashboard',
         currentCategory: 'tenis-senior-masc',
         currentJornadaFilter: 'all',
+        // Pesquisa e paginação das listas longas (Inscrições e Utilizadores).
+        PAGE_SIZE: 10,
+        inscritosSearch: '',
+        inscritosPage: 0,
+        inscricoesPage: 0,
+        usersSearch: '',
+        usersPage: 0,
         currentChatChannel: 'global',
         realtimeSubscriptions: [],
 
@@ -712,7 +922,12 @@
                 ],
                 superTB: m.super_tb,
                 completed: m.completed,
-                wo: m.wo_player
+                wo: m.wo_player,
+                phase: m.phase || 'group',
+                groupIdx: (m.group_idx === null || m.group_idx === undefined) ? null : m.group_idx,
+                leg: m.leg || 1,
+                roundIdx: (m.round_idx === null || m.round_idx === undefined) ? null : m.round_idx,
+                label: m.label || null
               });
             }
           });
@@ -760,7 +975,17 @@
             this.state.tournaments[t.cat_id] = {
               startDate: t.start_date,
               endDate: t.end_date,
-              started: t.started
+              started: t.started,
+              legs: t.legs || 1,
+              numGroups: t.num_groups || 1,
+              qualifiersPerGroup: t.qualifiers_per_group ?? 2,
+              finalLegs: t.final_legs || 1,
+              finalType: t.final_type || 'none',
+              groups: t.groups || null,
+              finalSeeds: t.final_seeds || null,
+              finalStarted: !!t.final_started,
+              plannedJornadas: t.planned_jornadas || null,
+              capacity: t.capacity || null
             };
           });
 
@@ -830,7 +1055,7 @@
             .on('postgres_changes', { event: '*', schema: 'public', table: 'players' }, async () => {
               await this.loadData();
               this.renderVacanciesOverview();
-              if (this.currentTab === 'categorias' || this.currentTab === 'classificacao') this.render();
+              if (['categorias', 'classificacao', 'calendario', 'fasefinal'].includes(this.currentTab)) this.render();
             })
             .subscribe();
 
@@ -839,7 +1064,7 @@
             .channel('matches')
             .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, async () => {
               await this.loadData();
-              if (this.currentTab === 'resultados' || this.currentTab === 'classificacao') this.render();
+              if (['resultados', 'classificacao', 'calendario', 'fasefinal'].includes(this.currentTab)) this.render();
             })
             .subscribe();
 
@@ -972,6 +1197,11 @@
               super_tb: match.superTB,
               completed: match.completed,
               wo_player: match.wo,
+              phase: match.phase || 'group',
+              group_idx: match.groupIdx ?? null,
+              leg: match.leg || 1,
+              round_idx: match.roundIdx ?? null,
+              label: match.label || null,
               updated_at: new Date().toISOString()
             }])
             .select();
@@ -1210,6 +1440,7 @@
           tabs.push({ id: 'calendario', label: '📅 Calendário' });
           tabs.push({ id: 'classificacao', label: '📋 Classificação' });
           tabs.push({ id: 'resultados', label: '🎾 Resultados' });
+          tabs.push({ id: 'fasefinal', label: '🏁 Fase Final' });
           tabs.push({ id: 'chat', label: '💬 Chat' });
           tabs.push({ id: 'regulamento', label: '📖 Regulamento' });
           tabs.push({ id: 'settings', label: '⚙️ Definições' });
@@ -1240,6 +1471,7 @@
             calendario: () => this.renderCalendario(),
             classificacao: () => this.renderClassificacao(),
             resultados: () => this.renderResultados(),
+            fasefinal: () => this.renderFaseFinal(),
             chat: () => this.renderChat(),
             regulamento: () => this.renderRegulamento()
           };
@@ -1275,12 +1507,24 @@
         },
 
         getVacancies(catId) {
-          return this.MAX_PER_CATEGORY - (this.state.categories[catId]?.length || 0);
+          return Math.max(0, this.getCapacity(catId) - (this.state.categories[catId]?.length || 0));
         },
 
-        getPlayerStats(catId) {
-          const players = this.state.categories[catId] || [];
-          const matches = this.state.matches[catId] || [];
+        // opts: { groupIdx } — restringe a um grupo; { phase } — 'group' (defeito) ou 'final';
+        // { playerIds } — conjunto explícito de participantes (usado no mini-grupo final).
+        getPlayerStats(catId, opts) {
+          const o = opts || {};
+          const phase = o.phase || 'group';
+          const groupIdx = o.groupIdx ?? null;
+          const all = this.state.categories[catId] || [];
+          const players = o.playerIds
+            ? o.playerIds.map(id => all.find(p => p.id === id)).filter(Boolean)
+            : (groupIdx === null ? all : this.groupPlayers(catId, groupIdx));
+          const matches = (this.state.matches[catId] || []).filter(m => {
+            if ((m.phase || 'group') !== phase) return false;
+            if (groupIdx !== null && (m.groupIdx ?? null) !== groupIdx) return false;
+            return true;
+          });
           const stats = {};
           players.forEach(p => {
             stats[p.id] = {
@@ -1334,8 +1578,8 @@
           return stats;
         },
 
-        getRanking(catId) {
-          const stats = this.getPlayerStats(catId);
+        getRanking(catId, opts) {
+          const stats = this.getPlayerStats(catId, opts);
           const ranking = Object.values(stats);
           ranking.sort((a, b) => {
             if (b.points !== a.points) return b.points - a.points;
@@ -1385,36 +1629,160 @@
           return s1 >= s2 ? m.p1 : m.p2;
         },
 
-        generateRoundRobin(players) {
+        // ============================================
+        // FORMATO DO TORNEIO (mãos, grupos e fase final)
+        // ============================================
+        FINAL_TYPES: {
+          none: { label: 'Sem fase final', short: '—' },
+          bracket: { label: 'Quadro eliminatório (cruzamento entre grupos)', short: 'Eliminatórias' },
+          minigroup: { label: 'Mini-grupo final (apurados todos-contra-todos)', short: 'Mini-grupo final' },
+          single: { label: 'Finalíssima única (1º de cada grupo)', short: 'Finalíssima' }
+        },
+
+        // Nº de jornadas de um todos-contra-todos com n participantes e `legs` mãos.
+        roundRobinJornadas(n, legs) {
+          if (n < 2) return 0;
+          return (n % 2 === 0 ? n - 1 : n) * (legs || 1);
+        },
+
+        // Todos-contra-todos (algoritmo do círculo). Suporta duas mãos: a 2ª mão repete
+        // os mesmos confrontos com os papéis trocados, nas jornadas seguintes.
+        // opts: { legs, startJornada, groupIdx, idPrefix }
+        generateRoundRobin(players, opts) {
+          const o = opts || {};
+          const legs = o.legs || 1;
+          const startJornada = o.startJornada || 1;
+          const groupIdx = o.groupIdx ?? null;
+          const prefix = o.idPrefix || 'm';
           const matches = [];
           const n = players.length;
           if (n < 2) return matches;
           let matchId = 0;
-          const list = [...players.map(p => p.id)];
+          const list = [...players.map(p => p.id || p)];
           if (n % 2 !== 0) list.push(null);
           const rounds = list.length - 1;
           const half = list.length / 2;
           const fixed = list[0];
-          const rotating = list.slice(1);
-          for (let round = 0; round < rounds; round++) {
-            const current = [fixed, ...rotating];
-            for (let i = 0; i < half; i++) {
-              const p1 = current[i], p2 = current[list.length - 1 - i];
-              if (p1 && p2) {
+          for (let leg = 1; leg <= legs; leg++) {
+            const rotating = list.slice(1);
+            for (let round = 0; round < rounds; round++) {
+              const current = [fixed, ...rotating];
+              for (let i = 0; i < half; i++) {
+                let p1 = current[i], p2 = current[list.length - 1 - i];
+                if (!p1 || !p2) continue;
+                // Na 2ª mão troca-se quem "recebe" (p1/p2), para o confronto não ser idêntico.
+                if (leg === 2) { const tmp = p1; p1 = p2; p2 = tmp; }
                 matches.push({
-                  id: `m-${matchId++}`,
-                  jornada: round + 1,
+                  id: `${prefix}-${matchId++}`,
+                  jornada: startJornada + (leg - 1) * rounds + round,
                   p1, p2,
                   sets: [{ p1: null, p2: null }, { p1: null, p2: null }, { p1: null, p2: null }],
                   superTB: false,
                   completed: false,
-                  wo: null
+                  wo: null,
+                  phase: 'group',
+                  groupIdx,
+                  leg,
+                  roundIdx: null,
+                  label: null
                 });
               }
+              rotating.push(rotating.shift());
             }
-            rotating.push(rotating.shift());
           }
           return matches;
+        },
+
+        // Divide os inscritos (já sorteados) por `numGroups` grupos, alternadamente
+        // para que fiquem equilibrados (serpentina simples).
+        splitIntoGroups(players, numGroups) {
+          const groups = Array.from({ length: numGroups }, () => []);
+          players.forEach((p, i) => groups[i % numGroups].push(p));
+          return groups;
+        },
+
+        // Menor potência de 2 >= n.
+        nextPowerOfTwo(n) {
+          let s = 1;
+          while (s < n) s *= 2;
+          return s;
+        },
+
+        // Ordem-padrão de colocação de cabeças-de-série num quadro de tamanho `size`
+        // (1 vs último, etc.). Ex.: size 8 → [1,8,4,5,2,7,3,6].
+        seedOrder(size) {
+          let order = [1];
+          while (order.length < size) {
+            const n = order.length * 2;
+            const next = [];
+            order.forEach(sd => { next.push(sd); next.push(n + 1 - sd); });
+            order = next;
+          }
+          return order;
+        },
+
+        // Nº de rondas da fase final para um dado formato (o jogo do 3º/4º lugar
+        // disputa-se na mesma jornada da final, por isso não conta como ronda extra).
+        finalJornadas(finalType, qualifiersPerGroup, numGroups, finalLegs) {
+          const L = finalLegs || 1;
+          if (!finalType || finalType === 'none' || numGroups < 2) return 0;
+          if (finalType === 'single') return L;
+          const q = qualifiersPerGroup * numGroups;
+          if (q < 2) return 0;
+          if (finalType === 'minigroup') return this.roundRobinJornadas(q, L);
+          return Math.log2(this.nextPowerOfTwo(q)) * L;   // bracket: cada ronda ocupa L jornadas
+        },
+
+        // Plano completo de um formato: quantos jogos e quantas jornadas dá.
+        // Usado no modal de configuração (pré-visualização) e ao iniciar o torneio.
+        planTournament(nPlayers, cfg) {
+          const numGroups = cfg.numGroups || 1;
+          const legs = cfg.legs || 1;
+          const finalType = numGroups > 1 ? (cfg.finalType || 'none') : 'none';
+          const qpg = cfg.qualifiersPerGroup ?? 2;
+          const finalLegs = cfg.finalLegs || 1;
+          const sizes = [];
+          for (let g = 0; g < numGroups; g++) {
+            sizes.push(Math.floor(nPlayers / numGroups) + (g < nPlayers % numGroups ? 1 : 0));
+          }
+          const groupJornadas = Math.max(0, ...sizes.map(n => this.roundRobinJornadas(n, legs)));
+          const groupMatches = sizes.reduce((sum, n) => sum + (n * (n - 1) / 2) * legs, 0);
+          const finalJornadas = this.finalJornadas(finalType, qpg, numGroups, finalLegs);
+          return {
+            numGroups, legs, finalType, finalLegs, qualifiersPerGroup: qpg, sizes,
+            groupJornadas, groupMatches, finalJornadas,
+            totalJornadas: groupJornadas + finalJornadas,
+            qualifiers: numGroups > 1 && finalType !== 'none' ? Math.min(qpg, Math.min(...sizes)) * numGroups : 0
+          };
+        },
+
+        // Configuração sugerida a partir do nº de inscritos (o admin pode sempre mudar).
+        suggestedConfig(nPlayers) {
+          if (nPlayers > 8) return { numGroups: 2, legs: 1, finalType: 'bracket', qualifiersPerGroup: 2, finalLegs: 1 };
+          if (nPlayers <= 5) return { numGroups: 1, legs: 2, finalType: 'none', qualifiersPerGroup: 2, finalLegs: 1 };
+          return { numGroups: 1, legs: 1, finalType: 'none', qualifiersPerGroup: 2, finalLegs: 1 };
+        },
+
+        // Nome do grupo (A, B, ...) a partir do índice.
+        groupName(idx) {
+          return String.fromCharCode(65 + idx);
+        },
+
+        // Grupo de um jogador (índice) segundo o sorteio guardado; null se grupo único.
+        playerGroup(catId, playerId) {
+          const groups = this.getTournament(catId).groups;
+          if (!groups || groups.length < 2) return null;
+          for (let g = 0; g < groups.length; g++) if (groups[g].includes(playerId)) return g;
+          return null;
+        },
+
+        // Lista de jogadores de um grupo (ou todos, se não houver grupos).
+        groupPlayers(catId, groupIdx) {
+          const players = this.state.categories[catId] || [];
+          if (groupIdx === null || groupIdx === undefined) return players;
+          const groups = this.getTournament(catId).groups;
+          if (!groups || !groups[groupIdx]) return [];
+          return groups[groupIdx].map(id => players.find(p => p.id === id)).filter(Boolean);
         },
 
         // ============================================
@@ -1425,8 +1793,9 @@
           if (!container) return;
           container.innerHTML = this.CATEGORIES.map(cat => {
             const count = this.state.categories[cat.id]?.length || 0;
-            const vacancies = this.MAX_PER_CATEGORY - count;
-            const pct = (count / this.MAX_PER_CATEGORY) * 100;
+            const capacity = this.getCapacity(cat.id);
+            const vacancies = Math.max(0, capacity - count);
+            const pct = Math.min(100, (count / capacity) * 100);
             const sportLabel = cat.sport === 'tenis' ? '🎾 Ténis' : '🏆 Padel';
             const displayName = cat.desc ? `${cat.name} <span class="text-[9px] text-white/60 block">${cat.desc}</span>` : cat.name;
             return `
@@ -1440,7 +1809,7 @@
           </div>
           <div class="flex items-baseline gap-1 mb-1">
             <span class="text-lg font-extrabold text-white">${count}</span>
-            <span class="text-xs text-white/70">/ ${this.MAX_PER_CATEGORY}</span>
+            <span class="text-xs text-white/70">/ ${capacity}</span>
           </div>
           <div class="w-full bg-white/20 rounded-full h-1.5 overflow-hidden">
             <div class="bg-white h-full" style="width: ${pct}%"></div>
@@ -1486,6 +1855,14 @@
           <div class="font-bold">Reiniciar</div>
         </button>
       </div>
+      <div class="bg-white rounded-2xl p-5 shadow-sm border mb-6">
+        <div class="font-bold text-lg">💾 Cópia de segurança dos inscritos</div>
+        <p class="text-xs text-gray-500 mt-1">Exporta todos os jogadores/duplas de todas as categorias para um ficheiro Excel. Se algo correr mal, importas o mesmo ficheiro e as participações voltam ao que estavam. A importação <strong>nunca apaga nada</strong> — só acrescenta ou atualiza.</p>
+        <div class="flex gap-2 flex-wrap mt-3">
+          <button onclick="app.exportPlayersExcel()" class="btn-admin text-white px-4 py-2 rounded-lg font-semibold text-sm">⬇️ Exportar jogadores (.xlsx)</button>
+          <button onclick="app.openImportPlayersModal()" class="px-4 py-2 rounded-lg font-semibold text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 border">⬆️ Importar jogadores</button>
+        </div>
+      </div>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
           <div class="text-2xl mb-1">👥</div>
@@ -1526,43 +1903,82 @@
         // Lista de utilizadores registados na app (contas — persistem entre torneios).
         renderUtilizadores() {
           if (this.currentUser.role !== 'admin') return '<div class="text-center py-12 text-gray-500">Acesso restrito</div>';
-          // Participações (categorias) por email, para mostrar em que torneios está inscrito.
-          const partsByEmail = {};
-          Object.entries(this.state.categories).forEach(([catId, players]) => {
-            const cat = this.CATEGORIES.find(c => c.id === catId);
-            (players || []).forEach(p => {
-              [p.email, p.partnerEmail].filter(Boolean).forEach(e => {
-                const k = e.toLowerCase();
-                (partsByEmail[k] = partsByEmail[k] || []).push(cat);
-              });
-            });
-          });
-          const accounts = Object.values(this.state.accounts)
-            .sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email));
+          const total = Object.keys(this.state.accounts).length;
           return `
-      <div class="mb-6 flex items-center justify-between">
-        <h2 class="text-2xl font-extrabold text-gray-900">Utilizadores <span class="text-base font-semibold text-gray-400">(${accounts.length})</span></h2>
+      <div class="mb-6 flex items-center justify-between flex-wrap gap-3">
+        <h2 class="text-2xl font-extrabold text-gray-900">Utilizadores <span class="text-base font-semibold text-gray-400">(${total})</span></h2>
         <button onclick="app.openAddPlayerModal()" class="btn-admin text-white px-4 py-2 rounded-lg font-semibold text-sm">+ Adicionar Utilizador</button>
       </div>
       <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        ${accounts.length === 0 ? `
-          <div class="p-12 text-center">
-            <div class="text-5xl mb-3">👥</div>
-            <p class="text-gray-500">Sem utilizadores registados</p>
-          </div>
-        ` : `
-          <div class="divide-y divide-gray-100">
-            ${accounts.map(a => {
-              const parts = partsByEmail[(a.email || '').toLowerCase()] || [];
-              const partsLabel = parts.length ? parts.map(c => `${c.icon} ${c.name}`).join(', ') : 'Sem inscrição ativa';
-              const emailAttr = (a.email || '').replace(/'/g, "\\'");
-              return `
+        <div class="p-4 pb-0">
+          ${this.searchBox('usersSearch', 'Pesquisar por nome ou email…', this.usersSearch, 'filterUsers')}
+        </div>
+        <div id="usersListWrap">${this.usersListHTML()}</div>
+      </div>
+    `;
+        },
+
+        // Categorias em que cada email está inscrito (o mesmo email pode ser o 2º
+        // jogador de uma dupla, por isso conta-se também partnerEmail).
+        participationsByEmail() {
+          const porEmail = {};
+          this.CATEGORIES.forEach(cat => {
+            (this.state.categories[cat.id] || []).forEach(pl => {
+              [pl.email, pl.partnerEmail].filter(Boolean).forEach(e => {
+                const k = e.toLowerCase();
+                (porEmail[k] = porEmail[k] || []).push(cat);
+              });
+            });
+          });
+          return porEmail;
+        },
+
+        usersFiltrados() {
+          const q = this.normalizeSearch(this.usersSearch);
+          const contas = Object.values(this.state.accounts)
+            .sort((a, b) => (a.name || a.email || '').localeCompare(b.name || b.email || ''));
+          if (!q) return contas;
+          return contas.filter(a => this.normalizeSearch(`${a.name || ''} ${a.email || ''}`).includes(q));
+        },
+
+        filterUsers() {
+          const el = document.getElementById('usersSearch');
+          this.usersSearch = el ? el.value : '';
+          this.usersPage = 0;
+          const wrap = document.getElementById('usersListWrap');
+          if (wrap) wrap.innerHTML = this.usersListHTML();
+        },
+
+        gotoUsersPage(n) {
+          this.usersPage = n;
+          const wrap = document.getElementById('usersListWrap');
+          if (wrap) wrap.innerHTML = this.usersListHTML();
+        },
+
+        usersListHTML() {
+          const filtrados = this.usersFiltrados();
+          const info = this.paginate(filtrados, this.usersPage);
+          this.usersPage = info.page;
+          const partsByEmail = this.participationsByEmail();
+          if (!filtrados.length) {
+            return `<div class="p-12 text-center">
+          <div class="text-5xl mb-3">${this.usersSearch ? '🔍' : '👥'}</div>
+          <p class="text-gray-500">${this.usersSearch ? 'Nenhum utilizador corresponde à pesquisa.' : 'Sem utilizadores registados'}</p>
+        </div>`;
+          }
+          return `
+      <div class="divide-y divide-gray-100">
+        ${info.slice.map(a => {
+            const parts = partsByEmail[(a.email || '').toLowerCase()] || [];
+            const partsLabel = parts.length ? parts.map(c => `${c.icon} ${c.name}`).join(', ') : 'Sem inscrição ativa';
+            const emailAttr = (a.email || '').replace(/'/g, "\\'");
+            return `
               <div class="p-4 flex items-center gap-3">
-                <div class="w-10 h-10 gradient-player rounded-full flex items-center justify-center text-white font-bold flex-shrink-0">${(a.name || a.email || '?').charAt(0)}</div>
+                <div class="w-10 h-10 gradient-player rounded-full flex items-center justify-center text-white font-bold flex-shrink-0">${this.escapeHtml((a.name || a.email || '?').charAt(0))}</div>
                 <div class="flex-1 min-w-0">
-                  <div class="font-bold text-sm">${a.name || '(sem nome)'}</div>
-                  <div class="text-xs text-gray-500 truncate">${a.email || 'sem email'}</div>
-                  <div class="text-xs text-gray-400 truncate">${partsLabel}</div>
+                  <div class="font-bold text-sm">${this.escapeHtml(a.name || '(sem nome)')}</div>
+                  <div class="text-xs text-gray-500 truncate">${this.escapeHtml(a.email || 'sem email')}</div>
+                  <div class="text-xs text-gray-400 truncate">${this.escapeHtml(partsLabel)}</div>
                 </div>
                 <div class="flex items-center gap-3 flex-shrink-0">
                   <button onclick="app.openAccountPasswordModal('${emailAttr}')" class="text-blue-500 text-xs font-semibold whitespace-nowrap">🔑 Password</button>
@@ -1570,11 +1986,9 @@
                 </div>
               </div>
             `;
-            }).join('')}
-          </div>
-        `}
+          }).join('')}
       </div>
-    `;
+      ${this.paginationBar(info, 'gotoUsersPage')}`;
         },
 
         openAccountPasswordModal(email) {
@@ -1634,26 +2048,201 @@
           return ids.map(id => this.CATEGORIES.find(c => c.id === id)?.name || id).join(', ');
         },
 
+        // ============================================
+        // LISTAS: PESQUISA E PAGINAÇÃO
+        // ============================================
+        // Texto normalizado (sem acentos, minúsculas) para a pesquisa não depender de acentos.
+        normalizeSearch(str) {
+          return (str || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+        },
+
+        // Fatia a lista da página atual, corrigindo a página se ela já não existir
+        // (ex.: filtrou-se e passou a haver menos páginas).
+        paginate(items, page) {
+          const perPage = this.PAGE_SIZE;
+          const totalPages = Math.max(1, Math.ceil(items.length / perPage));
+          const current = Math.min(Math.max(0, page), totalPages - 1);
+          return {
+            slice: items.slice(current * perPage, current * perPage + perPage),
+            page: current, totalPages, total: items.length,
+            from: items.length ? current * perPage + 1 : 0,
+            to: Math.min((current + 1) * perPage, items.length)
+          };
+        },
+
+        // Barra "1–10 de 37" com os botões de navegação. `handler` é o nome do
+        // método a chamar com o número da página.
+        paginationBar(info, handler) {
+          if (info.total <= this.PAGE_SIZE) return '';
+          const btn = (label, target, disabled) => `
+        <button onclick="app.${handler}(${target})" ${disabled ? 'disabled' : ''}
+          class="px-3 py-1.5 rounded-lg text-xs font-bold border ${disabled ? 'opacity-40 cursor-not-allowed text-gray-400' : 'hover:bg-gray-100 text-gray-700'}">${label}</button>`;
+          // Janela de páginas à volta da atual, para não encher o ecrã de números.
+          const nums = [];
+          const start = Math.max(0, Math.min(info.page - 2, info.totalPages - 5));
+          for (let i = start; i < Math.min(info.totalPages, start + 5); i++) {
+            nums.push(`<button onclick="app.${handler}(${i})" class="w-8 h-8 rounded-lg text-xs font-bold ${i === info.page ? 'bg-emerald-600 text-white' : 'border hover:bg-gray-100 text-gray-700'}">${i + 1}</button>`);
+          }
+          return `
+      <div class="p-3 border-t bg-gray-50 flex items-center justify-between gap-2 flex-wrap">
+        <div class="text-xs text-gray-500">A mostrar <strong>${info.from}–${info.to}</strong> de <strong>${info.total}</strong></div>
+        <div class="flex items-center gap-1">
+          ${btn('‹ Anterior', info.page - 1, info.page === 0)}
+          ${nums.join('')}
+          ${btn('Seguinte ›', info.page + 1, info.page >= info.totalPages - 1)}
+        </div>
+      </div>`;
+        },
+
+        // Caixa de pesquisa. Não re-renderiza o separador inteiro (isso faria perder
+        // o foco a cada tecla) — só atualiza o bloco da lista.
+        searchBox(id, placeholder, value, handler) {
+          return `
+      <div class="relative mb-4">
+        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">🔍</span>
+        <input id="${id}" type="search" value="${this.escapeHtml(value)}" placeholder="${placeholder}"
+          oninput="app.${handler}()"
+          class="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
+      </div>`;
+        },
+
+        // ============================================
+        // INSCRITOS (participações reais nos torneios)
+        // ============================================
+        // Uma linha por pessoa (agrupada por email), com todas as categorias em que
+        // está inscrita — no Padel a mesma pessoa pode estar em várias.
+        inscritosPorPessoa() {
+          const porChave = {};
+          this.CATEGORIES.forEach(cat => {
+            (this.state.categories[cat.id] || []).forEach(pl => {
+              const chave = (pl.email || pl.name || pl.id).toLowerCase();
+              const e = porChave[chave] = porChave[chave] || {
+                id: pl.id, name: pl.name, email: '', phone: '', nif: '', address: '', cats: []
+              };
+              // Cada participação guarda o seu próprio parceiro: no Padel a mesma
+              // pessoa pode jogar com duplas diferentes em categorias diferentes.
+              e.cats.push({ cat, partner: pl.partner?.name || '', partnerEmail: pl.partnerEmail || '' });
+              // Dados pessoais: fica o primeiro preenchido que aparecer.
+              if (!e.email && pl.email) e.email = pl.email;
+              if (!e.phone && pl.phone) e.phone = pl.phone;
+              if (!e.nif && pl.nif) e.nif = pl.nif;
+              if (!e.address && pl.address) e.address = pl.address;
+            });
+          });
+          return Object.values(porChave).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        },
+
+        inscritosFiltrados() {
+          const q = this.normalizeSearch(this.inscritosSearch);
+          const todos = this.inscritosPorPessoa();
+          if (!q) return todos;
+          return todos.filter(p => {
+            const alvo = this.normalizeSearch([
+              p.name, p.email, p.phone, p.nif,
+              ...p.cats.map(c => `${c.cat.name} ${c.cat.desc || ''} ${c.partner} ${c.partnerEmail}`)
+            ].join(' '));
+            return alvo.includes(q);
+          });
+        },
+
+        filterInscritos() {
+          const el = document.getElementById('inscritosSearch');
+          this.inscritosSearch = el ? el.value : '';
+          this.inscritosPage = 0;
+          const wrap = document.getElementById('inscritosListWrap');
+          if (wrap) wrap.innerHTML = this.inscritosListHTML();
+        },
+
+        gotoInscritosPage(n) {
+          this.inscritosPage = n;
+          const wrap = document.getElementById('inscritosListWrap');
+          if (wrap) wrap.innerHTML = this.inscritosListHTML();
+        },
+
+        inscritosListHTML() {
+          const filtrados = this.inscritosFiltrados();
+          const info = this.paginate(filtrados, this.inscritosPage);
+          this.inscritosPage = info.page;
+          if (!filtrados.length) {
+            return `<div class="p-10 text-center">
+          <div class="text-4xl mb-2">🔍</div>
+          <p class="text-gray-500 text-sm">${this.inscritosSearch ? 'Nenhum atleta corresponde à pesquisa.' : 'Ainda não há atletas inscritos em nenhuma categoria.'}</p>
+        </div>`;
+          }
+          return `
+      <div class="divide-y divide-gray-100">
+        ${info.slice.map(pl => `
+          <div class="p-4 flex items-start gap-3">
+            <div class="w-10 h-10 gradient-player rounded-full flex items-center justify-center text-white font-bold flex-shrink-0">${this.escapeHtml((pl.name || '?').charAt(0))}</div>
+            <div class="flex-1 min-w-0">
+              <div class="font-bold text-sm truncate">${this.escapeHtml(pl.name)}</div>
+              <div class="flex flex-wrap gap-1 mt-1">
+                ${pl.cats.map(c => `<span class="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold">${c.cat.icon} ${this.escapeHtml(c.cat.name)}${c.partner ? ` <span class="font-normal opacity-75">c/ ${this.escapeHtml(c.partner)}</span>` : ''}</span>`).join('')}
+              </div>
+              <div class="text-xs text-gray-500 mt-1 truncate">
+                ${pl.nif ? `<span class="text-gray-400">NIF</span> ${this.escapeHtml(pl.nif)} • ` : ''}${pl.email ? this.escapeHtml(pl.email) : 'sem email'}${pl.phone ? ' • ' + this.escapeHtml(pl.phone) : ''}
+              </div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+      ${this.paginationBar(info, 'gotoInscritosPage')}`;
+        },
+
+        gotoInscricoesPage(n) {
+          this.inscricoesPage = n;
+          const wrap = document.getElementById('inscricoesListWrap');
+          if (wrap) wrap.innerHTML = this.inscricoesListHTML();
+        },
+
         renderInscricoes() {
           if (this.currentUser.role !== 'admin') return '<div class="text-center py-12 text-gray-500">Acesso restrito</div>';
-          const total = this.state.inscriptions.length;
+          const totalFormularios = this.state.inscriptions.length;
+          const totalAtletas = this.inscritosPorPessoa().length;
+          // O ficheiro leva as duas folhas, por isso basta haver uma delas com dados.
+          const podeExportar = totalAtletas > 0 || totalFormularios > 0;
+          const participacoes = this.CATEGORIES.reduce((n, c) => n + (this.state.categories[c.id] || []).length, 0);
           return `
       <div class="mb-6 flex items-center justify-between flex-wrap gap-3">
-        <h2 class="text-2xl font-extrabold text-gray-900">Inscrições <span class="text-base font-semibold text-gray-400">(${total})</span></h2>
+        <h2 class="text-2xl font-extrabold text-gray-900">Inscrições</h2>
         <div class="flex gap-2">
-          <button onclick="app.exportInscriptionsExcel()" ${total === 0 ? 'disabled' : ''} class="btn-report text-white px-4 py-2 rounded-lg font-semibold text-sm ${total === 0 ? 'opacity-50 cursor-not-allowed' : ''}">📊 Exportar Excel</button>
+          <button onclick="app.exportInscriptionsExcel()" ${podeExportar ? '' : 'disabled'} class="btn-report text-white px-4 py-2 rounded-lg font-semibold text-sm ${podeExportar ? '' : 'opacity-50 cursor-not-allowed'}">📊 Exportar Excel</button>
           <button onclick="app.openInscription()" class="btn-inscription text-white px-4 py-2 rounded-lg font-semibold text-sm">+ Nova</button>
         </div>
       </div>
+
+      <!-- Quem está efetivamente inscrito e em que categorias -->
+      <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden mb-6">
+        <div class="p-4 border-b bg-gray-50">
+          <div class="font-bold">👥 Atletas inscritos <span class="text-sm font-semibold text-gray-400">(${totalAtletas})</span></div>
+          <p class="text-xs text-gray-500 mt-0.5">${participacoes} participação(ões) no total — quem está em mais do que uma categoria aparece uma só vez, com todas as suas categorias.</p>
+        </div>
+        <div class="p-4 pb-0">
+          ${this.searchBox('inscritosSearch', 'Pesquisar por nome, NIF, email, telemóvel ou categoria…', this.inscritosSearch, 'filterInscritos')}
+        </div>
+        <div id="inscritosListWrap">${this.inscritosListHTML()}</div>
+      </div>
+
+      <!-- Formulários de inscrição submetidos (com NIF, morada e passwords temporárias) -->
       <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        ${total === 0 ? `
-          <div class="p-12 text-center">
-            <div class="text-5xl mb-3">📝</div>
-            <p class="text-gray-500">Sem inscrições</p>
-          </div>
-        ` : `
-          <div class="divide-y divide-gray-100">
-            ${this.state.inscriptions.map(insc => {
+        <div class="p-4 border-b bg-gray-50">
+          <div class="font-bold">📝 Formulários de inscrição <span class="text-sm font-semibold text-gray-400">(${totalFormularios})</span></div>
+          <p class="text-xs text-gray-500 mt-0.5">O que foi submetido no formulário: dados completos e passwords temporárias.</p>
+        </div>
+        <div id="inscricoesListWrap">${this.inscricoesListHTML()}</div>
+      </div>
+    `;
+        },
+
+        inscricoesListHTML() {
+          const info = this.paginate(this.state.inscriptions, this.inscricoesPage);
+          this.inscricoesPage = info.page;
+          if (!info.total) {
+            return `<div class="p-12 text-center"><div class="text-5xl mb-3">📝</div><p class="text-gray-500">Sem inscrições</p></div>`;
+          }
+          return `
+      <div class="divide-y divide-gray-100">
+        ${info.slice.map(insc => {
             const sport = insc.sport;
             const catLabel = this.inscriptionCategoriesLabel(insc);
             const name = insc.player_name || insc.playerName || '';
@@ -1676,44 +2265,69 @@
                 </div>
               `;
           }).join('')}
-          </div>
-        `}
       </div>
-    `;
+      ${this.paginationBar(info, 'gotoInscricoesPage')}`;
         },
 
-        // Exporta todas as inscrições para um ficheiro Excel (.xlsx). Só admin.
+        // Exporta as inscrições para Excel. Leva duas folhas, porque são coisas
+        // diferentes: quem está mesmo inscrito nos torneios (uma linha por
+        // participação) e os formulários submetidos (com passwords temporárias).
+        // Só admin.
         exportInscriptionsExcel() {
           if (this.currentUser?.role !== 'admin') return;
-          if (!this.state.inscriptions.length) { alert('Não há inscrições para exportar.'); return; }
-          const rows = this.state.inscriptions.map(insc => ({
-            'Data inscrição': insc.registered_at ? new Date(insc.registered_at).toLocaleString('pt-PT') : '',
-            'Modalidade': insc.sport === 'padel' ? 'Padel' : 'Ténis',
-            'Categoria(s)': this.inscriptionCategoriesLabel(insc),
-            'Tipo': insc.type === 'doubles' ? 'Duplas' : 'Singulares',
-            'Jogador 1 - Nome': insc.player_name && insc.partner_name ? (insc.player_name.split(' & ')[0]) : (insc.player_name || ''),
-            'Jogador 1 - NIF': insc.nif || '',
-            'Jogador 1 - Email': insc.email || '',
-            'Jogador 1 - Telemóvel': insc.phone || '',
-            'Jogador 1 - Morada': insc.address || '',
-            'Jogador 2 - Nome': insc.partner_name || '',
-            'Jogador 2 - NIF': insc.partner_nif || '',
-            'Jogador 2 - Email': insc.partner_email || '',
-            'Jogador 2 - Telemóvel': insc.partner_phone || '',
-            'Jogador 2 - Morada': insc.partner_address || '',
-            'Password temp. Jogador 1': insc.temp_password || '',
-            'Password temp. Jogador 2': insc.partner_temp_password || ''
-          }));
-          const ws = XLSX.utils.json_to_sheet(rows);
+          const atletas = this.inscritosPorPessoa();
+          const formularios = this.state.inscriptions;
+          if (!atletas.length && !formularios.length) { alert('Não há inscrições para exportar.'); return; }
           const wb = XLSX.utils.book_new();
-          XLSX.utils.book_append_sheet(wb, ws, 'Inscrições');
+
+          if (atletas.length) {
+            // Uma linha por participação: quem está em duas categorias aparece duas
+            // vezes, cada uma com o parceiro dessa categoria.
+            const linhas = [];
+            atletas.forEach(pl => {
+              pl.cats.forEach(c => {
+                linhas.push({
+                  'Categoria': c.cat.name,
+                  'Modalidade': c.cat.sport === 'padel' ? 'Padel' : 'Ténis',
+                  'Nome': pl.name || '',
+                  'NIF': pl.nif || '',
+                  'Email': pl.email || '',
+                  'Telemóvel': pl.phone || '',
+                  'Morada': pl.address || '',
+                  '2º Jogador': c.partner || '',
+                  'Email 2º Jogador': c.partnerEmail || ''
+                });
+              });
+            });
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(linhas), 'Atletas inscritos');
+          }
+
+          if (formularios.length) {
+            const rows = formularios.map(insc => ({
+              'Data inscrição': insc.registered_at ? new Date(insc.registered_at).toLocaleString('pt-PT') : '',
+              'Modalidade': insc.sport === 'padel' ? 'Padel' : 'Ténis',
+              'Categoria(s)': this.inscriptionCategoriesLabel(insc),
+              'Tipo': insc.type === 'doubles' ? 'Duplas' : 'Singulares',
+              'Jogador 1 - Nome': insc.player_name && insc.partner_name ? (insc.player_name.split(' & ')[0]) : (insc.player_name || ''),
+              'Jogador 1 - NIF': insc.nif || '',
+              'Jogador 1 - Email': insc.email || '',
+              'Jogador 1 - Telemóvel': insc.phone || '',
+              'Jogador 1 - Morada': insc.address || '',
+              'Jogador 2 - Nome': insc.partner_name || '',
+              'Jogador 2 - NIF': insc.partner_nif || '',
+              'Jogador 2 - Email': insc.partner_email || '',
+              'Jogador 2 - Telemóvel': insc.partner_phone || '',
+              'Jogador 2 - Morada': insc.partner_address || '',
+              'Password temp. Jogador 1': insc.temp_password || '',
+              'Password temp. Jogador 2': insc.partner_temp_password || ''
+            }));
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Formulários');
+          }
+
           const today = new Date().toISOString().slice(0, 10);
           XLSX.writeFile(wb, `inscricoes-emtp-${today}.xlsx`);
         },
 
-        // ============================================
-        // PERFIL
-        // ============================================
         renderPerfil() {
           if (this.currentUser.role === 'admin') {
             return `
@@ -1919,7 +2533,8 @@
       <div class="grid md:grid-cols-2 gap-4">
         ${this.CATEGORIES.map(cat => {
             const players = this.state.categories[cat.id] || [];
-            const vacancies = this.MAX_PER_CATEGORY - players.length;
+            const vacancies = this.getVacancies(cat.id);
+            const capacity = this.getCapacity(cat.id);
             return `
             <div class="bg-white rounded-2xl shadow-sm border overflow-hidden">
               <div class="bg-gradient-to-r ${cat.color} p-5 text-white">
@@ -1932,6 +2547,8 @@
                   <div class="text-right">
                     <div class="text-xs text-white/70">Vagas</div>
                     <div class="text-2xl font-bold">${vacancies}</div>
+                    <div class="text-[10px] text-white/60">${players.length}/${capacity} inscritos</div>
+                    ${isAdmin ? `<button onclick="app.openTournamentDatesModal('${cat.id}')" class="mt-1 text-[10px] font-bold bg-white/20 hover:bg-white/30 rounded px-2 py-0.5">⚙️ Lotação</button>` : ''}
                   </div>
                 </div>
               </div>
@@ -1974,8 +2591,36 @@
           return {
             startDate: t.startDate || this.MOCK_START,
             endDate: t.endDate || this.MOCK_END,
-            started: !!t.started
+            started: !!t.started,
+            // Formato. Os defaults são os do comportamento antigo (grupo único, uma mão,
+            // sem fase final), por isso torneios já gravados continuam a funcionar na mesma.
+            legs: t.legs || 1,
+            numGroups: t.numGroups || 1,
+            qualifiersPerGroup: t.qualifiersPerGroup ?? 2,
+            finalLegs: t.finalLegs || 1,
+            finalType: t.finalType || 'none',
+            groups: t.groups || null,
+            finalSeeds: t.finalSeeds || null,
+            finalStarted: !!t.finalStarted,
+            plannedJornadas: t.plannedJornadas || null,
+            capacity: t.capacity || null
           };
+        },
+
+        // Lotação de uma categoria: a definida pelo admin ou, se não houver, o valor por defeito.
+        // Lotação de uma categoria: a definida pelo admin ou, na falta dela, o valor por
+        // defeito. Nunca devolve menos do que os inscritos que já lá estão — a app aceita
+        // inscrições acima do limite (é um aviso, não um bloqueio), e mostrar "11/8" seria
+        // um denominador falso. Enquanto o admin não subir o limite, a categoria aparece
+        // cheia com o número real (11/11).
+        getCapacity(catId) {
+          const definida = this.getTournament(catId).capacity || this.MAX_PER_CATEGORY;
+          return Math.max(definida, this.state.categories[catId]?.length || 0);
+        },
+
+        // A lotação tal como o admin a definiu (sem o ajuste acima), para o formulário.
+        getConfiguredCapacity(catId) {
+          return this.getTournament(catId).capacity || this.MAX_PER_CATEGORY;
         },
 
         todayStr() { return new Date().toISOString().slice(0, 10); },
@@ -1992,13 +2637,32 @@
         // inscritos são n jornadas (cada um folga uma vez); com par são n-1.
         // Depois de iniciado, usa as jornadas reais do sorteio.
         jornadasForCategory(catId) {
+          const t = this.getTournament(catId);
           const matches = this.state.matches[catId] || [];
-          if (this.getTournament(catId).started && matches.length) {
-            return Math.max(...matches.map(m => m.jornada));
+          if (t.started) {
+            // Depois de iniciado, o total de jornadas é o previsto no sorteio (grupos +
+            // fase final), para que as janelas de datas não mudem quando a fase final é gerada.
+            if (t.plannedJornadas) return t.plannedJornadas;
+            if (matches.length) return Math.max(...matches.map(m => m.jornada));
           }
           const n = (this.state.categories[catId] || []).length;
           if (n < 2) return this.SCHEDULE.length;
-          return n % 2 === 0 ? n - 1 : n;
+          return this.planTournament(n, t).totalJornadas || this.SCHEDULE.length;
+        },
+
+        // Última jornada da fase de grupos (a fase final começa na seguinte).
+        groupJornadasForCategory(catId) {
+          const t = this.getTournament(catId);
+          const groupMatches = (this.state.matches[catId] || []).filter(m => (m.phase || 'group') === 'group');
+          if (t.started && groupMatches.length) return Math.max(...groupMatches.map(m => m.jornada));
+          const n = (this.state.categories[catId] || []).length;
+          if (n < 2) return this.SCHEDULE.length;
+          return this.planTournament(n, t).groupJornadas;
+        },
+
+        // Fase (grupos / final) a que pertence uma jornada.
+        jornadaPhase(catId, jornada) {
+          return jornada > this.groupJornadasForCategory(catId) ? 'final' : 'group';
         },
 
         // Distribui `count` jornadas por [start, end] com igual duração.
@@ -2027,9 +2691,13 @@
           const nInscritos = (this.state.categories[catId] || []).length;
           const tenisCats = this.CATEGORIES.filter(c => c.sport === 'tenis');
           const padelCats = this.CATEGORIES.filter(c => c.sport === 'padel');
+          const formato = started
+            ? `${t.numGroups > 1 ? t.numGroups + ' grupos' : 'grupo único'} • ${t.legs === 2 ? 'duas mãos' : 'uma mão'}${t.numGroups > 1 && t.finalType !== 'none' ? ' • ' + this.FINAL_TYPES[t.finalType].short : ''}`
+            : '';
           const statusText = started
-            ? `🟢 Iniciado • ${this.formatDatePt(t.startDate)} a ${this.formatDatePt(t.endDate)} • sorteio feito`
-            : `🟡 Aberto • ${this.formatDatePt(t.startDate)} a ${this.formatDatePt(t.endDate)} • ${nInscritos} inscrito(s) • inscrições abertas`;
+            ? `🟢 Iniciado • ${this.formatDatePt(t.startDate)} a ${this.formatDatePt(t.endDate)} • ${formato}`
+            : `🟡 Aberto • ${this.formatDatePt(t.startDate)} a ${this.formatDatePt(t.endDate)} • ${nInscritos}/${this.getCapacity(catId)} inscrito(s) • inscrições abertas`;
+          const finalAction = started ? this.finalPhaseAction(catId) : null;
           return `
       <div class="mb-4 flex justify-between items-center flex-wrap gap-3">
         <h2 class="text-2xl font-extrabold">Calendário</h2>
@@ -2051,9 +2719,10 @@
           ${isAdmin ? `
             <div class="flex gap-2 flex-wrap">
               ${!started ? `
-                <button onclick="app.openTournamentDatesModal('${catId}')" class="btn-admin text-white px-4 py-2 rounded-lg font-semibold text-sm">📅 Alterar Datas</button>
+                <button onclick="app.openTournamentDatesModal('${catId}')" class="btn-admin text-white px-4 py-2 rounded-lg font-semibold text-sm">📅 Datas e Lotação</button>
                 <button onclick="app.startTournament('${catId}')" class="btn-primary text-white px-4 py-2 rounded-lg font-semibold text-sm">▶️ Iniciar Torneio</button>
               ` : `
+                ${finalAction ? `<button onclick="app.advanceFinalPhase('${catId}')" class="btn-primary text-white px-4 py-2 rounded-lg font-semibold text-sm">${finalAction}</button>` : ''}
                 <button onclick="app.reopenTournament('${catId}')" class="btn-danger text-white px-4 py-2 rounded-lg font-semibold text-sm">🔄 Reiniciar (voltar a aberto)</button>
               `}
             </div>
@@ -2062,12 +2731,17 @@
         ${isAdmin ? `<p class="text-xs text-gray-500 mt-3">${started ? 'Torneio iniciado. Reiniciar apaga os jogos e volta ao estado aberto (novas datas e novo sorteio).' : '1) Ajusta as datas (opcional). 2) Inicia o torneio — faz o sorteio dos jogos pelas jornadas. As inscrições estão abertas até iniciares.'}</p>` : ''}
       </div>
       <div class="grid md:grid-cols-3 gap-4">
-        ${nInscritos < 2 ? '<div class="text-gray-400 text-sm col-span-full">Sem inscritos suficientes para gerar as jornadas.</div>' : windows.map(w => `
-          <div class="bg-white rounded-2xl p-5 shadow-sm border ${started ? '' : 'opacity-90'}">
-            <div class="text-xs font-bold text-emerald-600 uppercase">Jornada ${w.jornada}</div>
+        ${nInscritos < 2 ? '<div class="text-gray-400 text-sm col-span-full">Sem inscritos suficientes para gerar as jornadas.</div>' : windows.map(w => {
+            const isFinal = this.jornadaPhase(catId, w.jornada) === 'final';
+            const nJogos = (this.state.matches[catId] || []).filter(m => m.jornada === w.jornada).length;
+            return `
+          <div class="bg-white rounded-2xl p-5 shadow-sm border ${isFinal ? 'border-amber-300' : ''} ${started ? '' : 'opacity-90'}">
+            <div class="text-xs font-bold ${isFinal ? 'text-amber-600' : 'text-emerald-600'} uppercase">Jornada ${w.jornada} ${isFinal ? '• Fase final' : ''}</div>
             <div class="font-bold text-lg">${this.formatDatePt(w.startDate)} – ${this.formatDatePt(w.endDate)}</div>
+            ${started ? `<div class="text-xs text-gray-500 mt-1">${nJogos} jogo(s)</div>` : ''}
           </div>
-        `).join('')}
+        `;
+          }).join('')}
       </div>
     `;
         },
@@ -2077,10 +2751,11 @@
           const t = this.getTournament(catId);
           const start = t?.startDate || this.MOCK_START;
           const end = t?.endDate || this.MOCK_END;
+          const inscritos = (this.state.categories[catId] || []).length;
           this.openGenericModal(`
       <div class="p-6">
         <div class="flex justify-between mb-4">
-          <h3 class="text-xl font-bold">📅 Datas do Torneio</h3>
+          <h3 class="text-xl font-bold">📅 Datas e Lotação</h3>
           <button onclick="app.closeGenericModal()" class="text-gray-400 text-2xl leading-none">×</button>
         </div>
         <p class="text-sm text-gray-500 mb-4">Categoria: <strong>${cat.icon} ${cat.name}</strong></p>
@@ -2093,13 +2768,18 @@
             <label class="block text-sm font-semibold text-gray-700 mb-1">Data de fim</label>
             <input id="tourEnd" type="date" value="${end}" min="${this.MOCK_START}" max="${this.MOCK_END}" class="w-full px-3 py-2 border border-gray-200 rounded-lg">
           </div>
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1">Lotação da categoria</label>
+            <input id="tourCapacity" type="number" min="${Math.max(2, inscritos)}" max="64" value="${Math.max(this.getConfiguredCapacity(catId), inscritos)}" class="w-full px-3 py-2 border border-gray-200 rounded-lg">
+            <p class="text-xs text-gray-500 mt-1">Número máximo de inscritos nesta categoria (atualmente ${inscritos} inscrito(s)). Sobe-o quando a procura for maior — com mais de 8 podes jogar a dois grupos.</p>
+          </div>
           <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-900">
             Intervalo máximo: ${this.formatDatePt(this.MOCK_START)} a ${this.formatDatePt(this.MOCK_END)} (${this.mockMaxDays()} dias). As jornadas (todos-contra-todos, conforme o nº de inscritos) são distribuídas com igual duração dentro do intervalo escolhido.
           </div>
           <div id="tourDatesError" class="hidden text-sm text-red-600 font-semibold"></div>
           <div class="flex gap-2 pt-2">
             <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">Cancelar</button>
-            <button onclick="app.saveTournamentDates('${catId}')" class="flex-1 btn-admin text-white px-4 py-2 rounded-lg font-semibold">Guardar Datas</button>
+            <button onclick="app.saveTournamentDates('${catId}')" class="flex-1 btn-admin text-white px-4 py-2 rounded-lg font-semibold">Guardar</button>
           </div>
         </div>
       </div>
@@ -2109,34 +2789,55 @@
         async saveTournamentDates(catId) {
           const start = document.getElementById('tourStart').value;
           const end = document.getElementById('tourEnd').value;
+          const capacityEl = document.getElementById('tourCapacity');
           const errorEl = document.getElementById('tourDatesError');
           errorEl.classList.add('hidden');
           const fail = msg => { errorEl.textContent = msg; errorEl.classList.remove('hidden'); };
           if (!start || !end) return fail('Preenche as duas datas.');
           const span = this.daysBetween(start, end);
           if (span <= 0) return fail('A data de fim tem de ser depois da de início.');
-          if (span < this.SCHEDULE.length) return fail(`O torneio precisa de pelo menos ${this.SCHEDULE.length} dias (uma jornada por dia, no mínimo).`);
-          if (span > this.mockMaxDays()) return fail(`O intervalo não pode exceder ${this.mockMaxDays()} dias (${this.formatDatePt(this.MOCK_START)} a ${this.formatDatePt(this.MOCK_END)}).`);
           const existing = this.getTournament(catId);
-          const obj = { startDate: start, endDate: end, started: existing?.started || false };
+          const inscritos = (this.state.categories[catId] || []).length;
+          // O mínimo de dias passa a acompanhar as jornadas que o formato atual exige.
+          const minDias = Math.max(this.SCHEDULE.length, this.jornadasForCategory(catId));
+          if (span < minDias) return fail(`Este formato precisa de pelo menos ${minDias} dias (uma jornada por dia, no mínimo).`);
+          if (span > this.mockMaxDays()) return fail(`O intervalo não pode exceder ${this.mockMaxDays()} dias (${this.formatDatePt(this.MOCK_START)} a ${this.formatDatePt(this.MOCK_END)}).`);
+          let capacity = capacityEl ? parseInt(capacityEl.value) : existing.capacity;
+          if (capacityEl) {
+            if (!capacity || capacity < 2) return fail('A lotação tem de ser pelo menos 2.');
+            if (capacity < inscritos) return fail(`A lotação não pode ser inferior aos ${inscritos} inscritos que já existem nesta categoria.`);
+          }
+          const obj = { ...existing, startDate: start, endDate: end, started: existing?.started || false, capacity };
           try {
             await this.saveTournamentToSupabase(catId, obj);
             this.state.tournaments[catId] = obj;
             this.closeGenericModal();
             this.render();
-            alert('Datas guardadas!' + (obj.started ? '' : ' Podes agora iniciar o torneio.'));
+            alert('Datas e lotação guardadas!' + (obj.started ? '' : ' Podes agora iniciar o torneio.'));
           } catch (error) {
             console.error('Erro:', error);
             fail('Erro ao guardar datas: ' + (error.message || error));
           }
         },
 
+        // Guarda SEMPRE o objeto completo (todas as colunas de configuração), para
+        // que uma gravação parcial nunca reponha o formato do torneio nos defaults.
         async saveTournamentToSupabase(catId, obj) {
           const { error } = await sb.from('tournaments').upsert([{
             cat_id: catId,
             start_date: obj.startDate,
             end_date: obj.endDate,
-            started: obj.started,
+            started: !!obj.started,
+            legs: obj.legs || 1,
+            num_groups: obj.numGroups || 1,
+            qualifiers_per_group: obj.qualifiersPerGroup ?? 2,
+            final_legs: obj.finalLegs || 1,
+            final_type: obj.finalType || 'none',
+            groups: obj.groups || null,
+            final_seeds: obj.finalSeeds || null,
+            final_started: !!obj.finalStarted,
+            planned_jornadas: obj.plannedJornadas || null,
+            capacity: obj.capacity || null,
             updated_at: new Date().toISOString()
           }]);
           if (error) throw error;
@@ -2151,33 +2852,311 @@
           return a;
         },
 
-        // Fase 2: iniciar o torneio = sorteio dos jogos pelas jornadas (round-robin com ordem aleatória).
-        async startTournament(catId) {
+        // ============================================
+        // FASE 2: INICIAR O TORNEIO (configuração + sorteio)
+        // ============================================
+        // O admin escolhe, por categoria: um grupo ou dois, jogos a uma ou duas mãos
+        // e — havendo dois grupos — o formato da fase final e quantos passam por grupo.
+        startTournament(catId) {
           const t = this.getTournament(catId);
           const cat = this.CATEGORIES.find(c => c.id === catId);
-          if (!t || !t.startDate || !t.endDate) { alert('⚠️ Define primeiro as datas do torneio.'); return; }
           const players = this.state.categories[catId] || [];
-          if (players.length < 2) { alert('⚠️ São precisos pelo menos 2 inscritos para iniciar.'); return; }
-          const confirmMsg = t.started
-            ? 'O torneio já foi iniciado. Refazer o sorteio dos jogos? Os resultados atuais desta categoria serão apagados.'
-            : `Iniciar o torneio de ${cat.name}? Vai fazer o sorteio dos jogos pelas jornadas.`;
-          if (!confirm(confirmMsg)) return;
+          // Guardas de entrada, também em modal — neste fluxo não há diálogos do browser.
+          if (!t || !t.startDate || !t.endDate) {
+            this.openGenericModal(this.modalErro('Faltam as datas do torneio',
+              'Define primeiro as datas de início e de fim desta categoria.',
+              'Definir datas', `app.openTournamentDatesModal('${catId}')`));
+            return;
+          }
+          if (players.length < 2) {
+            this.openGenericModal(this.modalErro('Inscritos insuficientes',
+              `São precisos pelo menos 2 inscritos para iniciar. Esta categoria tem ${players.length}.`,
+              'Ver inscritos', `app.closeGenericModal(); app.switchTab('categorias')`));
+            return;
+          }
+          const n = players.length;
+          // Se viemos do passo de confirmação ("← Voltar"), retomamos as escolhas feitas;
+          // senão parte-se da configuração em vigor ou da sugerida pelo nº de inscritos.
+          const cfg = (this.pendingDraw && this.pendingDraw.catId === catId)
+            ? { ...this.pendingDraw.cfg }
+            : t.started
+              ? { numGroups: t.numGroups, legs: t.legs, finalType: t.finalType, qualifiersPerGroup: t.qualifiersPerGroup, finalLegs: t.finalLegs }
+              : this.suggestedConfig(n);
+          const canTwoGroups = n >= 4;
+          if (!canTwoGroups) cfg.numGroups = 1;
+          const radio = (name, value, checked, title, desc, disabled) => `
+        <label class="flex items-start gap-3 p-3 border rounded-xl ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer hover:bg-gray-50'} ${checked ? 'border-emerald-500 bg-emerald-50' : 'border-gray-200'}">
+          <input type="radio" name="${name}" value="${value}" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''} onchange="app.refreshStartPreview('${catId}')" class="mt-1">
+          <span class="min-w-0">
+            <span class="block text-sm font-bold text-gray-900">${title}</span>
+            <span class="block text-xs text-gray-500">${desc}</span>
+          </span>
+        </label>`;
+          this.openGenericModal(`
+      <div class="p-6">
+        ${this.modalSteps('▶️ Iniciar Torneio', `${cat.icon} <strong>${cat.name}</strong> • ${n} inscrito${n === 1 ? '' : 's'}`, 0, 3)}
+        ${t.started ? `<div class="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-3 text-xs mb-4">⚠️ Este torneio já está iniciado. Avançar faz um <strong>novo sorteio</strong> e apaga os jogos e resultados atuais desta categoria.</div>` : ''}
+
+        <div class="mb-4">
+          <div class="text-xs font-bold text-gray-400 uppercase mb-2">1. Grupos</div>
+          <div class="grid gap-2">
+            ${radio('cfgGroups', '1', cfg.numGroups === 1, 'Grupo único', 'Todos contra todos numa só tabela.', false)}
+            ${radio('cfgGroups', '2', cfg.numGroups === 2, 'Dois grupos + fase final', canTwoGroups ? 'Sorteio por dois grupos; os melhores de cada grupo apuram-se.' : 'Precisa de pelo menos 4 inscritos.', !canTwoGroups)}
+          </div>
+        </div>
+
+        <div class="mb-4">
+          <div class="text-xs font-bold text-gray-400 uppercase mb-2">2. Mãos (fase de grupos)</div>
+          <div class="grid gap-2">
+            ${radio('cfgLegs', '1', cfg.legs === 1, 'Uma mão', 'Cada confronto joga-se uma vez.', false)}
+            ${radio('cfgLegs', '2', cfg.legs === 2, 'Duas mãos', 'Cada confronto joga-se duas vezes (ida e volta).', false)}
+          </div>
+        </div>
+
+        <div id="cfgFinalBlock" class="mb-4 ${cfg.numGroups === 2 ? '' : 'hidden'}">
+          <div class="text-xs font-bold text-gray-400 uppercase mb-2">3. Fase final</div>
+          <div class="grid sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-semibold text-gray-700 mb-1">Formato</label>
+              <select id="cfgFinalType" onchange="app.refreshStartPreview('${catId}')" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+                ${Object.entries(this.FINAL_TYPES).map(([k, v]) => `<option value="${k}" ${cfg.finalType === k ? 'selected' : ''}>${v.label}</option>`).join('')}
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-gray-700 mb-1">Apurados por grupo</label>
+              <select id="cfgQualifiers" onchange="app.refreshStartPreview('${catId}')" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+                ${[1, 2, 3, 4].map(q => `<option value="${q}" ${cfg.qualifiersPerGroup === q ? 'selected' : ''}>${q} melhor${q > 1 ? 'es' : ''} de cada grupo</option>`).join('')}
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-gray-700 mb-1">Mãos (fase final)</label>
+              <select id="cfgFinalLegs" onchange="app.refreshStartPreview('${catId}')" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+                <option value="1" ${cfg.finalLegs === 2 ? '' : 'selected'}>Uma mão</option>
+                <option value="2" ${cfg.finalLegs === 2 ? 'selected' : ''}>Duas mãos (ida e volta)</option>
+              </select>
+              <p id="cfgFinalLegsHint" class="text-[11px] text-gray-500 mt-1"></p>
+            </div>
+          </div>
+        </div>
+
+        <div id="cfgPreview" class="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900 mb-4"></div>
+        <div id="cfgError" class="hidden text-sm text-red-600 font-semibold mb-3"></div>
+
+        <div class="flex gap-2">
+          <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">Cancelar</button>
+          <button onclick="app.showDrawConfirm('${catId}')" class="flex-1 btn-primary text-white px-4 py-2 rounded-lg font-semibold">Continuar →</button>
+        </div>
+      </div>
+    `);
+          this.refreshStartPreview(catId);
+        },
+
+        // Lê a configuração escolhida no modal de início.
+        readStartConfig() {
+          const picked = name => {
+            const el = document.querySelector(`input[name="${name}"]:checked`);
+            return el ? parseInt(el.value) : 1;
+          };
+          const numGroups = picked('cfgGroups');
+          const legs = picked('cfgLegs');
+          const finalTypeEl = document.getElementById('cfgFinalType');
+          const qualifiersEl = document.getElementById('cfgQualifiers');
+          const finalLegsEl = document.getElementById('cfgFinalLegs');
+          return {
+            numGroups,
+            legs,
+            finalType: numGroups > 1 && finalTypeEl ? finalTypeEl.value : 'none',
+            qualifiersPerGroup: qualifiersEl ? parseInt(qualifiersEl.value) : 2,
+            finalLegs: finalLegsEl ? parseInt(finalLegsEl.value) : 1
+          };
+        },
+
+        // Pré-visualização em tempo real do que o formato escolhido vai produzir.
+        refreshStartPreview(catId) {
+          const box = document.getElementById('cfgPreview');
+          if (!box) return;
+          const n = (this.state.categories[catId] || []).length;
+          const cfg = this.readStartConfig();
+          const block = document.getElementById('cfgFinalBlock');
+          if (block) block.classList.toggle('hidden', cfg.numGroups < 2);
+          const plan = this.planTournament(n, cfg);
+          const t = this.getTournament(catId);
+          const dias = this.daysBetween(t.startDate, t.endDate);
+          const groupsTxt = plan.numGroups === 1
+            ? `1 grupo de ${n}`
+            : plan.sizes.map((sz, i) => `Grupo ${this.groupName(i)}: ${sz}`).join(' • ');
+          let finalTxt = '';
+          if (plan.numGroups > 1 && plan.finalType !== 'none') {
+            const q = plan.qualifiers;
+            const maos = plan.finalLegs === 2 ? ' a duas mãos' : '';
+            if (plan.finalType === 'single') finalTxt = `Finalíssima${maos}: ${plan.finalLegs} jogo(s) entre o 1º de cada grupo.`;
+            else if (plan.finalType === 'minigroup') finalTxt = `Mini-grupo final${maos}: ${q} apurados, todos-contra-todos (${plan.finalJornadas} jornada${plan.finalJornadas === 1 ? '' : 's'}).`;
+            else {
+              const rondas = plan.finalJornadas / plan.finalLegs;
+              finalTxt = `Quadro eliminatório${maos}: ${q} apurados, ${rondas} ronda${rondas === 1 ? '' : 's'}${q > 2 ? ' (com jogo do 3º/4º lugar)' : ''}.`;
+            }
+          }
+          const hint = document.getElementById('cfgFinalLegsHint');
+          if (hint) {
+            hint.textContent = cfg.finalLegs === 2 && cfg.finalType !== 'minigroup'
+              ? 'Passa quem somar mais sets nos dois jogos (depois jogos ganhos; persistindo, o melhor classificado nos grupos).'
+              : '';
+          }
+          const tooLong = plan.totalJornadas > dias;
+          box.className = tooLong
+            ? 'bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-800 mb-4'
+            : 'bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900 mb-4';
+          box.innerHTML = `
+        <div class="font-bold mb-1">Pré-visualização</div>
+        <div>• ${groupsTxt} • ${plan.legs === 2 ? 'duas mãos' : 'uma mão'}</div>
+        <div>• Fase de grupos: <strong>${plan.groupMatches}</strong> jogo(s) em <strong>${plan.groupJornadas}</strong> jornada(s)</div>
+        ${finalTxt ? `<div>• ${finalTxt}</div>` : ''}
+        <div class="mt-1">• Total: <strong>${plan.totalJornadas}</strong> jornada(s) distribuídas por ${dias} dias (${this.formatDatePt(t.startDate)} a ${this.formatDatePt(t.endDate)})</div>
+        ${tooLong ? `<div class="mt-1 font-bold">⚠️ O intervalo de datas é curto para ${plan.totalJornadas} jornadas. Alarga as datas antes de iniciar.</div>` : ''}
+      `;
+        },
+
+        // ---------- Passo 2: rever e confirmar ----------
+        // A configuração é lida aqui e guardada, porque no passo seguinte o
+        // formulário já não está no ecrã.
+        showDrawConfirm(catId) {
+          const t = this.getTournament(catId);
+          const cat = this.CATEGORIES.find(c => c.id === catId);
+          const players = this.state.categories[catId] || [];
+          const cfg = this.readStartConfig();
+          const errorEl = document.getElementById('cfgError');
+          const fail = msg => { if (errorEl) { errorEl.textContent = msg; errorEl.classList.remove('hidden'); } };
+          const plan = this.planTournament(players.length, cfg);
+          const minSize = Math.min(...plan.sizes);
+          if (cfg.numGroups > 1 && minSize < 2) return fail('Com dois grupos, cada grupo precisa de pelo menos 2 participantes.');
+          if (cfg.numGroups > 1 && cfg.finalType !== 'none' && cfg.qualifiersPerGroup > minSize) {
+            return fail(`Não podes apurar ${cfg.qualifiersPerGroup} de cada grupo: o grupo mais pequeno só tem ${minSize} participantes.`);
+          }
+          const dias = this.daysBetween(t.startDate, t.endDate);
+          if (plan.totalJornadas > dias) {
+            return fail(`Este formato precisa de ${plan.totalJornadas} jornadas e o intervalo escolhido só tem ${dias} dias. Alarga as datas primeiro.`);
+          }
+          this.pendingDraw = { catId, cfg, plan };
+
+          const linha = (rotulo, valor) => `
+        <div class="flex justify-between gap-3 py-2 border-b border-gray-100 last:border-0">
+          <span class="text-gray-500">${rotulo}</span><span class="font-semibold text-right">${valor}</span>
+        </div>`;
+          const finalDesc = plan.numGroups > 1 && plan.finalType !== 'none'
+            ? `${this.FINAL_TYPES[plan.finalType].short}${plan.finalLegs === 2 ? ' (duas mãos)' : ''} • ${plan.qualifiers} apurados`
+            : 'Sem fase final';
+          this.setModalContent(`
+      <div class="p-6">
+        ${this.modalSteps('🎲 Confirmar o sorteio', `${cat.icon} <strong>${cat.name}</strong>`, 1, 3)}
+        <div class="bg-gray-50 border rounded-xl p-4 text-sm mb-4">
+          ${linha('Participantes', `${players.length}`)}
+          ${linha('Grupos', plan.numGroups === 1 ? 'Grupo único' : plan.sizes.map((sz, k) => `${this.groupName(k)}: ${sz}`).join(' • '))}
+          ${linha('Fase de grupos', `${plan.legs === 2 ? 'Duas mãos' : 'Uma mão'} • ${plan.groupMatches} jogos`)}
+          ${linha('Fase final', finalDesc)}
+          ${linha('Jornadas', `${plan.totalJornadas} (${this.formatDatePt(t.startDate)} a ${this.formatDatePt(t.endDate)})`)}
+        </div>
+        ${t.started ? `
+          <div class="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-800 mb-4">
+            <strong>Atenção:</strong> esta categoria já tinha um sorteio feito. Avançar <strong>apaga os jogos e resultados atuais de ${this.escapeHtml(cat.name)}</strong> e faz um sorteio novo. As outras categorias não são tocadas.
+          </div>` : `
+          <div class="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900 mb-4">
+            O sorteio distribui os inscritos ao acaso e cria os jogos. A partir daí as inscrições nesta categoria fecham.
+          </div>`}
+        <div class="flex gap-2">
+          <button onclick="app.startTournament('${catId}')" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">← Voltar</button>
+          <button onclick="app.confirmStartTournament()" class="flex-1 ${t.started ? 'btn-danger' : 'btn-primary'} text-white px-4 py-2 rounded-lg font-semibold">🎲 ${t.started ? 'Refazer sorteio' : 'Sortear e Iniciar'}</button>
+        </div>
+      </div>
+    `);
+        },
+
+        // ---------- Passo 3: sortear e gravar ----------
+        async confirmStartTournament() {
+          const pendente = this.pendingDraw;
+          if (!pendente) return;
+          const { catId, cfg, plan } = pendente;
+          const t = this.getTournament(catId);
+          const cat = this.CATEGORIES.find(c => c.id === catId);
+          const players = this.state.categories[catId] || [];
+          this.setModalContent(this.modalBusy('A sortear…', `A criar ${plan.groupMatches} jogos de ${cat.name}. Não feches a janela.`));
           try {
             const drawn = this.shuffleArray(players);
-            const matches = this.generateRoundRobin(drawn).map((m, i) => ({ ...m, id: `${catId}-m${i}` }));
-            // Substituir jogos desta categoria
+            const groupsArr = this.splitIntoGroups(drawn, cfg.numGroups);
+            let matches = [];
+            if (cfg.numGroups === 1) {
+              matches = this.generateRoundRobin(drawn, { legs: cfg.legs, startJornada: 1, groupIdx: null });
+            } else {
+              groupsArr.forEach((gp, gi) => {
+                matches = matches.concat(this.generateRoundRobin(gp, { legs: cfg.legs, startJornada: 1, groupIdx: gi }));
+              });
+            }
+            matches = matches.map((m, k) => ({ ...m, id: `${catId}-m${k}` }));
+            // Substituir os jogos DESTA categoria (nunca toca nas outras categorias).
             await sb.from('matches').delete().eq('cat_id', catId);
             for (const m of matches) await this.addMatchToSupabase(m, catId);
             this.state.matches[catId] = matches;
-            const obj = { startDate: t.startDate, endDate: t.endDate, started: true };
+            const obj = {
+              ...t,
+              started: true,
+              legs: cfg.legs,
+              numGroups: cfg.numGroups,
+              qualifiersPerGroup: cfg.qualifiersPerGroup,
+              finalLegs: cfg.finalLegs,
+              finalType: cfg.finalType,
+              groups: cfg.numGroups > 1 ? groupsArr.map(g => g.map(pl => pl.id)) : null,
+              finalSeeds: null,
+              finalStarted: false,
+              plannedJornadas: plan.totalJornadas
+            };
             await this.saveTournamentToSupabase(catId, obj);
             this.state.tournaments[catId] = obj;
+            this.pendingDraw = null;
             this.render();
-            alert(`✅ Torneio de ${cat.name} iniciado! Sorteio concluído (${matches.length} jogos distribuídos pelas jornadas).`);
+            this.showDrawResult(catId, groupsArr, matches.length, plan);
           } catch (error) {
             console.error('Erro:', error);
-            alert('Erro ao iniciar o torneio: ' + (error.message || error));
+            this.setModalContent(this.modalErro(
+              'O sorteio não ficou concluído',
+              error.message || String(error),
+              'Tentar de novo', `app.confirmStartTournament()`));
           }
+        },
+
+        // ---------- Passo 4: resultado do sorteio ----------
+        showDrawResult(catId, groupsArr, nJogos, plan) {
+          const cat = this.CATEGORIES.find(c => c.id === catId);
+          const grupos = plan.numGroups > 1
+            ? `<div class="grid sm:grid-cols-2 gap-3 mb-4">
+            ${groupsArr.map((g, k) => `
+              <div class="border rounded-xl overflow-hidden">
+                <div class="bg-indigo-50 text-indigo-800 px-3 py-2 text-xs font-bold">Grupo ${this.groupName(k)} • ${g.length}</div>
+                <ol class="p-3 space-y-1 text-sm list-decimal list-inside">
+                  ${g.map(pl => `<li class="truncate">${this.escapeHtml(pl.name)}</li>`).join('')}
+                </ol>
+              </div>`).join('')}
+          </div>`
+            : `<div class="border rounded-xl overflow-hidden mb-4">
+            <div class="bg-emerald-50 text-emerald-800 px-3 py-2 text-xs font-bold">Ordem do sorteio • ${groupsArr[0].length}</div>
+            <ol class="p-3 space-y-1 text-sm list-decimal list-inside max-h-56 overflow-y-auto scrollbar-thin">
+              ${groupsArr[0].map(pl => `<li class="truncate">${this.escapeHtml(pl.name)}</li>`).join('')}
+            </ol>
+          </div>`;
+          this.setModalContent(`
+      <div class="p-6">
+        ${this.modalSteps('✅ Torneio iniciado', `${cat.icon} <strong>${cat.name}</strong>`, 2, 3)}
+        <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-sm text-emerald-900 mb-4">
+          <strong>${nJogos}</strong> jogos criados em <strong>${plan.groupJornadas}</strong> jornadas de fase de grupos${plan.finalJornadas ? `, mais <strong>${plan.finalJornadas}</strong> para a fase final` : ''}.
+        </div>
+        ${grupos}
+        <div class="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900 mb-4">
+          Os atletas já podem registar resultados em <strong>Resultados</strong>.${plan.finalType !== 'none' ? ' Quando a fase de grupos fechar, aparece aqui o botão para gerar a fase final.' : ''}
+        </div>
+        <div class="flex gap-2">
+          <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">Fechar</button>
+          <button onclick="app.closeGenericModal(); app.currentCategory='${catId}'; app.switchTab('resultados')" class="flex-1 btn-primary text-white px-4 py-2 rounded-lg font-semibold">Ver jogos →</button>
+        </div>
+      </div>
+    `);
         },
 
         // Volta o torneio ao estado ABERTO: apaga os jogos (sorteio) mas mantém as inscrições.
@@ -2187,8 +3166,12 @@
           if (!confirm(`Reiniciar o torneio de ${cat.name}?\n\n• Volta ao estado ABERTO.\n• Os jogos e resultados atuais são apagados.\n• As inscrições mantêm-se (podes alterar as datas e iniciar de novo).`)) return;
           try {
             await sb.from('matches').delete().eq('cat_id', catId);
-            this.state.matches[catId] = this.generateRoundRobin(this.state.categories[catId] || []);
-            const obj = { startDate: t.startDate, endDate: t.endDate, started: false };
+            this.state.matches[catId] = [];
+            // Volta ao estado aberto e limpa o formato sorteado (grupos, fase final, jornadas previstas).
+            const obj = {
+              ...t, started: false, groups: null, finalSeeds: null,
+              finalStarted: false, plannedJornadas: null
+            };
             await this.saveTournamentToSupabase(catId, obj);
             this.state.tournaments[catId] = obj;
             this.render();
@@ -2200,36 +3183,480 @@
         },
 
         // ============================================
+        // FASE FINAL (apuramento, quadro e mini-grupo)
+        // ============================================
+        groupMatchesOf(catId) {
+          return (this.state.matches[catId] || []).filter(m => (m.phase || 'group') === 'group');
+        },
+
+        finalMatchesOf(catId) {
+          return (this.state.matches[catId] || []).filter(m => m.phase === 'final');
+        },
+
+        // A fase de grupos está fechada quando todos os jogos de grupo têm resultado.
+        groupPhaseComplete(catId) {
+          const ms = this.groupMatchesOf(catId);
+          return ms.length > 0 && ms.every(m => this.isMatchComplete(m));
+        },
+
+        // Apurados, por ordem de seriação cruzada: 1ºA, 1ºB, 2ºA, 2ºB, ...
+        // Assim, no quadro eliminatório, o 1º de um grupo encontra o último apurado do outro.
+        computeQualifierSeeds(catId) {
+          const t = this.getTournament(catId);
+          if (t.numGroups < 2 || t.finalType === 'none') return [];
+          const q = t.finalType === 'single' ? 1 : t.qualifiersPerGroup;
+          const rankings = [];
+          for (let g = 0; g < t.numGroups; g++) rankings.push(this.getRanking(catId, { groupIdx: g }));
+          const seeds = [];
+          for (let i = 0; i < q; i++) {
+            for (let g = 0; g < t.numGroups; g++) {
+              const r = rankings[g][i];
+              if (r) seeds.push(r.id);
+            }
+          }
+          return seeds;
+        },
+
+        // Nome de uma ronda do quadro consoante quantos ainda estão em prova.
+        bracketRoundLabel(teamsInRound) {
+          if (teamsInRound <= 2) return 'Finalíssima';
+          if (teamsInRound <= 4) return 'Meia-final';
+          if (teamsInRound <= 8) return 'Quartos-de-final';
+          if (teamsInRound <= 16) return 'Oitavos-de-final';
+          return 'Eliminatória';
+        },
+
+        // Sets e jogos de um jogo, na perspetiva de p1/p2 (mesma contabilidade da classificação).
+        matchTally(m) {
+          if (m.wo === m.p1) return { s1: 0, s2: 2, g1: 0, g2: 12 };
+          if (m.wo === m.p2) return { s1: 2, s2: 0, g1: 12, g2: 0 };
+          let s1 = 0, s2 = 0, g1 = 0, g2 = 0;
+          (m.sets || []).forEach((set, idx) => {
+            if (set.p1 === null || set.p2 === null) return;
+            if (idx === 2 && m.superTB) {
+              if (set.p1 > set.p2) { s1++; g1++; } else { s2++; g2++; }
+            } else {
+              g1 += set.p1 || 0; g2 += set.p2 || 0;
+              if ((set.p1 || 0) > (set.p2 || 0)) s1++; else s2++;
+            }
+          });
+          return { s1, s2, g1, g2 };
+        },
+
+        // Os jogos que compõem uma eliminatória (1 jogo a uma mão, 2 a duas mãos).
+        tieMatches(catId, roundIdx, a, b, isThird) {
+          return this.finalMatchesOf(catId).filter(m => m.roundIdx === roundIdx
+            && (isThird ? this.isThirdPlace(m) : !this.isThirdPlace(m))
+            && ((m.p1 === a && m.p2 === b) || (m.p1 === b && m.p2 === a)));
+        },
+
+        // Quem passa uma eliminatória. A uma mão é simplesmente quem ganhou o jogo.
+        // A duas mãos vale o agregado: sets somados → jogos somados → melhor classificado
+        // na fase de grupos (seriação). Devolve null enquanto a eliminatória não fechar.
+        tieResult(catId, roundIdx, a, b, isThird) {
+          const t = this.getTournament(catId);
+          const expected = t.finalLegs || 1;
+          const ms = this.tieMatches(catId, roundIdx, a, b, isThird);
+          if (ms.length < expected || !ms.every(m => this.isMatchComplete(m))) return null;
+          let setsA = 0, setsB = 0, gamesA = 0, gamesB = 0;
+          ms.forEach(m => {
+            const tally = this.matchTally(m);
+            const aIsP1 = m.p1 === a;
+            setsA += aIsP1 ? tally.s1 : tally.s2;
+            setsB += aIsP1 ? tally.s2 : tally.s1;
+            gamesA += aIsP1 ? tally.g1 : tally.g2;
+            gamesB += aIsP1 ? tally.g2 : tally.g1;
+          });
+          if (setsA !== setsB) return setsA > setsB ? a : b;
+          if (gamesA !== gamesB) return gamesA > gamesB ? a : b;
+          const seeds = t.finalSeeds || [];
+          const ia = seeds.indexOf(a), ib = seeds.indexOf(b);
+          if (ia !== -1 && ib !== -1 && ia !== ib) return ia < ib ? a : b;
+          return a;
+        },
+
+        // Resumo do agregado de uma eliminatória, para mostrar no quadro.
+        tieScore(catId, roundIdx, a, b, isThird) {
+          const ms = this.tieMatches(catId, roundIdx, a, b, isThird);
+          if (!ms.length) return '';
+          return ms
+            .filter(m => this.isMatchComplete(m))
+            .map(m => {
+              const inv = m.p1 !== a;
+              return m.sets.filter(x => x.p1 !== null && x.p2 !== null)
+                .map(x => inv ? `${x.p2}-${x.p1}` : `${x.p1}-${x.p2}`).join(' ');
+            })
+            .filter(Boolean).join('  |  ');
+        },
+
+        // Estado do quadro numa dada ronda: array de ids (null = vaga por decidir ou "bye").
+        // É recalculado a partir das seriações fixadas + resultados já registados.
+        bracketSlots(catId, roundIdx) {
+          const t = this.getTournament(catId);
+          const seeds = t.finalSeeds || [];
+          if (!seeds.length) return [];
+          const size = this.nextPowerOfTwo(seeds.length);
+          let slots = this.seedOrder(size).map(sd => seeds[sd - 1] || null);
+          for (let r = 0; r < roundIdx; r++) {
+            const next = [];
+            for (let i = 0; i < slots.length; i += 2) {
+              const a = slots[i], b = slots[i + 1];
+              if (!a && !b) { next.push(null); continue; }
+              // Os "byes" só existem na 1ª ronda (é aí que o quadro é preenchido com as
+              // seriações). Depois disso, um lado vazio é apenas uma vaga ainda por decidir.
+              if (r === 0 && (!a || !b)) { next.push(a || b); continue; }
+              if (!a || !b) { next.push(null); continue; }
+              next.push(this.tieResult(catId, r, a, b, false));
+            }
+            slots = next;
+          }
+          return slots;
+        },
+
+        THIRD_PLACE_LABEL: '3º/4º lugar',
+
+        // Verdadeiro para os jogos do 3º/4º lugar (a duas mãos o rótulo leva sufixo da mão).
+        isThirdPlace(m) {
+          return !!m.label && m.label.indexOf(this.THIRD_PLACE_LABEL) === 0;
+        },
+
+        bracketTotalRounds(catId) {
+          const seeds = this.getTournament(catId).finalSeeds || [];
+          return seeds.length ? Math.log2(this.nextPowerOfTwo(seeds.length)) : 0;
+        },
+
+        // Ronda do quadro atualmente em jogo (a mais alta já gerada).
+        currentFinalRound(catId) {
+          const finals = this.finalMatchesOf(catId).filter(m => m.roundIdx !== null && m.roundIdx !== undefined);
+          return finals.length ? Math.max(...finals.map(m => m.roundIdx)) : -1;
+        },
+
+        // Verdadeiro se a fase final já terminou (todos os jogos gerados estão fechados
+        // e não há mais rondas para gerar).
+        finalPhaseComplete(catId) {
+          const t = this.getTournament(catId);
+          if (!t.finalStarted) return false;
+          const finals = this.finalMatchesOf(catId);
+          if (!finals.length || !finals.every(m => this.isMatchComplete(m))) return false;
+          if (t.finalType === 'bracket') return this.currentFinalRound(catId) >= this.bracketTotalRounds(catId) - 1;
+          return true;
+        },
+
+        // O admin pode avançar a fase final? Devolve o rótulo da ação ou null.
+        finalPhaseAction(catId) {
+          const t = this.getTournament(catId);
+          if (t.numGroups < 2 || t.finalType === 'none') return null;
+          if (!t.finalStarted) return this.groupPhaseComplete(catId) ? '🏁 Gerar Fase Final' : null;
+          if (t.finalType !== 'bracket') return null;
+          const cur = this.currentFinalRound(catId);
+          if (cur < 0 || cur >= this.bracketTotalRounds(catId) - 1) return null;
+          const curMatches = this.finalMatchesOf(catId).filter(m => m.roundIdx === cur);
+          if (!curMatches.length || !curMatches.every(m => this.isMatchComplete(m))) return null;
+          const teamsNext = this.nextPowerOfTwo((t.finalSeeds || []).length) / Math.pow(2, cur + 1);
+          return `➡️ Gerar ${this.bracketRoundLabel(teamsNext)}`;
+        },
+
+        // ---------- Fase final: passo 1, rever o que vai ser gerado ----------
+        advanceFinalPhase(catId) {
+          const t = this.getTournament(catId);
+          const cat = this.CATEGORIES.find(c => c.id === catId);
+          const players = this.state.categories[catId] || [];
+          const nameOf = id => (players.find(pl => pl.id === id) || {}).name || id;
+          const primeira = !t.finalStarted;
+
+          if (primeira && !this.groupPhaseComplete(catId)) {
+            this.openGenericModal(this.modalErro(
+              'A fase de grupos ainda não está fechada',
+              'Faltam resultados por registar. A fase final só pode ser gerada quando todos os jogos de grupo tiverem resultado.',
+              'Ver jogos', `app.closeGenericModal(); app.currentCategory='${catId}'; app.switchTab('resultados')`));
+            return;
+          }
+
+          let corpo = '', titulo = '', subtitulo = `${cat.icon} <strong>${cat.name}</strong>`;
+          if (primeira) {
+            const seeds = this.computeQualifierSeeds(catId);
+            if (seeds.length < 2) {
+              this.openGenericModal(this.modalErro('Sem apurados suficientes',
+                'Não há participantes suficientes para montar a fase final.', 'Fechar', 'app.closeGenericModal()'));
+              return;
+            }
+            this.pendingFinal = { catId, seeds };
+            titulo = '🏁 Gerar Fase Final';
+            const q = t.finalType === 'single' ? 1 : t.qualifiersPerGroup;
+            corpo = `
+        <div class="bg-gray-50 border rounded-xl p-4 mb-4">
+          <div class="text-xs font-bold text-gray-400 uppercase mb-2">Apurados (${q} por grupo)</div>
+          <ol class="space-y-1 text-sm list-decimal list-inside">
+            ${seeds.map(id => {
+              const g = this.playerGroup(catId, id);
+              return `<li class="truncate">${this.escapeHtml(nameOf(id))} <span class="text-xs text-gray-400">(Grupo ${g === null ? '?' : this.groupName(g)})</span></li>`;
+            }).join('')}
+          </ol>
+        </div>
+        <div class="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900 mb-4">
+          Formato: <strong>${this.FINAL_TYPES[t.finalType].label}</strong>${t.finalLegs === 2 ? ' • <strong>duas mãos</strong>' : ''}.
+          Depois de gerada, a classificação dos grupos fica fechada para efeitos de apuramento.
+        </div>`;
+          } else {
+            this.pendingFinal = { catId, seeds: t.finalSeeds };
+            const proxima = this.currentFinalRound(catId) + 1;
+            const equipas = this.nextPowerOfTwo((t.finalSeeds || []).length) / Math.pow(2, proxima);
+            const slots = this.bracketSlots(catId, proxima);
+            const pares = [];
+            for (let k = 0; k < slots.length; k += 2) if (slots[k] && slots[k + 1]) pares.push([slots[k], slots[k + 1]]);
+            titulo = `➡️ Gerar ${this.bracketRoundLabel(equipas)}`;
+            corpo = `
+        <div class="bg-gray-50 border rounded-xl p-4 mb-4">
+          <div class="text-xs font-bold text-gray-400 uppercase mb-2">Jogos a criar</div>
+          <div class="space-y-1 text-sm">
+            ${pares.map(([a, b]) => `<div class="truncate">${this.escapeHtml(nameOf(a))} <span class="text-gray-400">vs</span> ${this.escapeHtml(nameOf(b))}</div>`).join('')}
+          </div>
+        </div>
+        ${t.finalLegs === 2 ? `<div class="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900 mb-4">A duas mãos: cada confronto dá <strong>2 jogos</strong>.</div>` : ''}`;
+          }
+
+          this.openGenericModal(`
+      <div class="p-6">
+        ${this.modalSteps(titulo, subtitulo, 0, 2)}
+        ${corpo}
+        <div class="flex gap-2">
+          <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">Cancelar</button>
+          <button onclick="app.confirmAdvanceFinalPhase()" class="flex-1 btn-primary text-white px-4 py-2 rounded-lg font-semibold">Gerar jogos</button>
+        </div>
+      </div>
+    `);
+        },
+
+        // ---------- Fase final: passo 2, gerar e gravar ----------
+        async confirmAdvanceFinalPhase() {
+          const pendente = this.pendingFinal;
+          if (!pendente) return;
+          const catId = pendente.catId;
+          const t = this.getTournament(catId);
+          const cat = this.CATEGORIES.find(c => c.id === catId);
+          const players = this.state.categories[catId] || [];
+          const nameOf = id => (players.find(pl => pl.id === id) || {}).name || id;
+          const gJ = this.groupJornadasForCategory(catId);
+          const estadoAnterior = this.state.tournaments[catId];
+          this.setModalContent(this.modalBusy('A gerar a fase final…', 'A criar os jogos. Não feches a janela.'));
+          try {
+            let newMatches = [];
+            let obj = { ...t };
+
+            if (!t.finalStarted) {
+              const seeds = pendente.seeds;
+              obj.finalSeeds = seeds;
+              obj.finalStarted = true;
+              // O quadro é construído a partir da seriação guardada no estado, por isso
+              // esta tem de ficar publicada ANTES de gerar os jogos (senão sai vazio).
+              // Se algo falhar a seguir, o catch repõe o estado anterior.
+              this.state.tournaments[catId] = obj;
+              const L = t.finalLegs || 1;
+              if (t.finalType === 'single') {
+                newMatches = [];
+                for (let leg = 1; leg <= L; leg++) {
+                  const home = leg === 2 ? seeds[1] : seeds[0];
+                  const away = leg === 2 ? seeds[0] : seeds[1];
+                  newMatches.push({
+                    ...this.makeFinalMatch(catId, home, away, 0, gJ + leg,
+                      L > 1 ? `Finalíssima (${leg}ª mão)` : 'Finalíssima', leg - 1),
+                    leg
+                  });
+                }
+              } else if (t.finalType === 'minigroup') {
+                newMatches = this.generateRoundRobin(seeds, { legs: L, startJornada: gJ + 1 })
+                  .map((m, k) => ({
+                    ...m, id: `${catId}-f${k}`, phase: 'final', groupIdx: null,
+                    roundIdx: null, label: m.leg === 2 ? 'Mini-grupo final (2ª mão)' : 'Mini-grupo final'
+                  }));
+              } else {
+                newMatches = this.buildBracketRoundMatches(catId, 0, gJ, obj.finalSeeds);
+              }
+            } else {
+              newMatches = this.buildBracketRoundMatches(catId, this.currentFinalRound(catId) + 1, gJ, t.finalSeeds);
+            }
+
+            if (!newMatches.length) throw new Error('Não foi possível apurar os jogos da fase final.');
+            for (const m of newMatches) await this.addMatchToSupabase(m, catId);
+            this.state.matches[catId] = [...(this.state.matches[catId] || []), ...newMatches];
+            await this.saveTournamentToSupabase(catId, obj);
+            this.state.tournaments[catId] = obj;
+            this.pendingFinal = null;
+            this.render();
+            const resumo = newMatches.map(m => `${m.label}: ${nameOf(m.p1)} vs ${nameOf(m.p2)}`).join('\n');
+            await this.sendMessage(catId, `🏁 Fase final: ${newMatches.length} jogo(s) agendado(s).\n${resumo}`, 'announcement');
+            this.setModalContent(`
+      <div class="p-6">
+        ${this.modalSteps('✅ Fase final atualizada', `${cat.icon} <strong>${cat.name}</strong>`, 1, 2)}
+        <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-sm text-emerald-900 mb-4">
+          <strong>${newMatches.length}</strong> jogo(s) criado(s). Foi enviado um anúncio no chat da categoria.
+        </div>
+        <div class="border rounded-xl divide-y mb-4">
+          ${newMatches.map(m => `
+            <div class="p-3 text-sm">
+              <div class="text-[10px] font-bold text-amber-700 uppercase">${this.escapeHtml(m.label || '')} • Jornada ${m.jornada}</div>
+              <div class="truncate">${this.escapeHtml(nameOf(m.p1))} <span class="text-gray-400">vs</span> ${this.escapeHtml(nameOf(m.p2))}</div>
+            </div>`).join('')}
+        </div>
+        <div class="flex gap-2">
+          <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">Fechar</button>
+          <button onclick="app.closeGenericModal(); app.currentCategory='${catId}'; app.switchTab('fasefinal')" class="flex-1 btn-primary text-white px-4 py-2 rounded-lg font-semibold">Ver quadro →</button>
+        </div>
+      </div>
+    `);
+          } catch (error) {
+            console.error('Erro:', error);
+            this.state.tournaments[catId] = estadoAnterior;   // nada fica a meio
+            this.setModalContent(this.modalErro(
+              'A fase final não ficou gerada',
+              error.message || String(error),
+              'Tentar de novo', 'app.confirmAdvanceFinalPhase()'));
+          }
+        },
+
+        makeFinalMatch(catId, p1, p2, roundIdx, jornada, label, seq) {
+          return {
+            id: `${catId}-f${roundIdx}-${seq}`,
+            jornada, p1, p2,
+            sets: [{ p1: null, p2: null }, { p1: null, p2: null }, { p1: null, p2: null }],
+            superTB: false, completed: false, wo: null,
+            phase: 'final', groupIdx: null, leg: 1, roundIdx, label
+          };
+        },
+
+        // Jogos de uma ronda do quadro. Quem não tem adversário (bye) passa sem jogar.
+        // Na ronda decisiva cria também o jogo do 3º/4º lugar, na mesma jornada.
+        buildBracketRoundMatches(catId, roundIdx, groupJornadas, seeds) {
+          const L = this.getTournament(catId).finalLegs || 1;
+          const size = this.nextPowerOfTwo(seeds.length);
+          const totalRounds = Math.log2(size);
+          if (roundIdx >= totalRounds) return [];
+          const slots = this.bracketSlots(catId, roundIdx);
+          const teamsInRound = size / Math.pow(2, roundIdx);
+          const label = this.bracketRoundLabel(teamsInRound);
+          // Cada ronda ocupa L jornadas seguidas (uma por mão).
+          const jornadaOf = leg => groupJornadas + roundIdx * L + leg;
+          const out = [];
+          let seq = 0;
+          const pairs = [];
+          for (let i = 0; i < slots.length; i += 2) pairs.push([slots[i], slots[i + 1]]);
+          const realPairs = pairs.filter(([a, b]) => a && b);
+          // Na 2ª mão invertem-se os papeis (quem foi p1 passa a p2).
+          const addTie = (a, b, nome) => {
+            for (let leg = 1; leg <= L; leg++) {
+              const home = leg === 2 ? b : a;
+              const away = leg === 2 ? a : b;
+              const titulo = L > 1 ? `${nome} (${leg}ª mão)` : nome;
+              out.push({ ...this.makeFinalMatch(catId, home, away, roundIdx, jornadaOf(leg), titulo, seq++), leg });
+            }
+          };
+          realPairs.forEach(([a, b], k) => addTie(a, b, realPairs.length > 1 ? `${label} ${k + 1}` : label));
+          // 3º/4º lugar: entre os derrotados das meias-finais, nas jornadas da final.
+          if (teamsInRound === 2 && roundIdx > 0) {
+            const prevSlots = this.bracketSlots(catId, roundIdx - 1);
+            const losers = [];
+            for (let i = 0; i < prevSlots.length; i += 2) {
+              const a = prevSlots[i], b = prevSlots[i + 1];
+              if (!a || !b) continue;
+              const w = this.tieResult(catId, roundIdx - 1, a, b, false);
+              if (w) losers.push(w === a ? b : a);
+            }
+            if (losers.length === 2) addTie(losers[0], losers[1], this.THIRD_PLACE_LABEL);
+          }
+          return out;
+        },
+
+        // Campeão da categoria, quando já está decidido.
+        champion(catId) {
+          const t = this.getTournament(catId);
+          if (!t.started) return null;
+          if (t.numGroups > 1 && t.finalType !== 'none') {
+            if (!this.finalPhaseComplete(catId)) return null;
+            if (t.finalType === 'minigroup') {
+              const r = this.getRanking(catId, { phase: 'final', playerIds: t.finalSeeds || [] });
+              return r[0] ? r[0].id : null;
+            }
+            if (t.finalType === 'single') {
+              const sd = t.finalSeeds || [];
+              return sd.length >= 2 ? this.tieResult(catId, 0, sd[0], sd[1], false) : null;
+            }
+            const last = this.currentFinalRound(catId);
+            const slots = this.bracketSlots(catId, last);
+            const a = slots[0], b = slots[1];
+            return (a && b) ? this.tieResult(catId, last, a, b, false) : null;
+          }
+          if (!this.groupPhaseComplete(catId)) return null;
+          const r = this.getRanking(catId);
+          return r[0] ? r[0].id : null;
+        },
+
+        // ============================================
         // CLASSIFICAÇÃO
         // ============================================
         renderClassificacao() {
           const tenisCats = this.CATEGORIES.filter(c => c.sport === 'tenis');
           const padelCats = this.CATEGORIES.filter(c => c.sport === 'padel');
+          const catId = this.currentCategory;
+          const t = this.getTournament(catId);
           return `
       <div class="mb-6 flex justify-between items-center flex-wrap gap-3">
         <h2 class="text-2xl font-extrabold">Classificação</h2>
         <select onchange="app.currentCategory=this.value; app.render()" class="px-4 py-2 border rounded-lg font-semibold text-sm">
           <optgroup label="🎾 Ténis">
-            ${tenisCats.map(c => `<option value="${c.id}" ${this.currentCategory === c.id ? 'selected' : ''}>${c.icon} ${c.name}</option>`).join('')}
+            ${tenisCats.map(c => `<option value="${c.id}" ${catId === c.id ? 'selected' : ''}>${c.icon} ${c.name}</option>`).join('')}
           </optgroup>
           <optgroup label="🏆 Padel">
-            ${padelCats.map(c => `<option value="${c.id}" ${this.currentCategory === c.id ? 'selected' : ''}>${c.icon} ${c.name}</option>`).join('')}
+            ${padelCats.map(c => `<option value="${c.id}" ${catId === c.id ? 'selected' : ''}>${c.icon} ${c.name}</option>`).join('')}
           </optgroup>
         </select>
       </div>
-      ${this.renderClassificationTable(this.currentCategory)}
+      ${this.renderFormatBadge(catId)}
+      ${t.numGroups > 1
+              ? `<div class="grid ${t.numGroups > 1 ? 'lg:grid-cols-2' : ''} gap-4">
+              ${(t.groups || []).map((_, g) => this.renderClassificationTable(catId, { groupIdx: g })).join('')}
+            </div>`
+              : this.renderClassificationTable(catId)}
+      ${t.finalStarted && t.finalType === 'minigroup'
+              ? `<div class="mt-4">${this.renderClassificationTable(catId, { phase: 'final', playerIds: t.finalSeeds || [], title: '🏁 Mini-grupo Final' })}</div>`
+              : ''}
     `;
         },
 
-        renderClassificationTable(catId) {
-          const ranking = this.getRanking(catId);
+        // Etiqueta com o formato em vigor (grupos, mãos e fase final) — visível para todos.
+        renderFormatBadge(catId) {
+          const t = this.getTournament(catId);
+          if (!t.started) return '';
+          const chips = [];
+          chips.push(t.numGroups > 1 ? `${t.numGroups} grupos` : 'Grupo único');
+          chips.push(t.legs === 2 ? 'Duas mãos' : 'Uma mão');
+          if (t.numGroups > 1 && t.finalType !== 'none') {
+            chips.push(`${this.FINAL_TYPES[t.finalType].short} • ${t.finalType === 'single' ? 1 : t.qualifiersPerGroup} apurado(s) por grupo${t.finalLegs === 2 ? ' • duas mãos' : ''}`);
+          }
+          return `<div class="flex flex-wrap gap-2 mb-4">
+        ${chips.map(c => `<span class="px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold">${c}</span>`).join('')}
+      </div>`;
+        },
+
+        // opts: { groupIdx } tabela de um grupo; { phase, playerIds, title } tabela do mini-grupo final.
+        renderClassificationTable(catId, opts) {
+          const o = opts || {};
+          const t = this.getTournament(catId);
+          const ranking = this.getRanking(catId, o);
           const cat = this.CATEGORIES.find(c => c.id === catId);
-          const players = this.state.categories[catId] || [];
-          if (players.length === 0) return `<div class="bg-white rounded-2xl p-12 text-center"><div class="text-5xl mb-3">👥</div><p class="text-gray-500">Sem atletas</p></div>`;
+          if (!ranking.length) return `<div class="bg-white rounded-2xl p-12 text-center"><div class="text-5xl mb-3">👥</div><p class="text-gray-500">Sem atletas</p></div>`;
+          // Quantos apuram: nos grupos, os X primeiros (se houver fase final configurada).
+          const qualifying = (o.groupIdx !== null && o.groupIdx !== undefined && t.finalType !== 'none')
+            ? (t.finalType === 'single' ? 1 : t.qualifiersPerGroup)
+            : 0;
+          const title = o.title || (o.groupIdx !== null && o.groupIdx !== undefined
+            ? `${cat.icon} ${cat.name} — Grupo ${this.groupName(o.groupIdx)}`
+            : `${cat.icon} ${cat.name}`);
+          const champ = this.champion(catId);
           return `
       <div class="bg-white rounded-2xl shadow-sm border overflow-hidden">
         <div class="bg-gradient-to-r ${cat.color} p-5 text-white">
-          <h3 class="text-xl font-bold">${cat.icon} ${cat.name}</h3>
+          <h3 class="text-xl font-bold">${title}</h3>
+          ${qualifying ? `<p class="text-xs text-white/80 mt-1">Apuram-se os ${qualifying} primeiros para a fase final</p>` : ''}
         </div>
         <div class="overflow-x-auto">
           <table class="w-full text-sm">
@@ -2237,21 +3664,26 @@
               <tr class="text-xs text-gray-600 uppercase">
                 <th class="py-3 px-4 text-left">#</th>
                 <th class="py-3 px-4 text-left">Atleta</th>
+                <th class="py-3 px-2 text-center">J</th>
                 <th class="py-3 px-2 text-center">Pts</th>
                 <th class="py-3 px-2 text-center">V/D</th>
                 <th class="py-3 px-2 text-center">Δ Sets</th>
               </tr>
             </thead>
             <tbody>
-              ${ranking.map((p, idx) => `
-                <tr class="border-t hover:bg-gray-50 ${idx < 4 ? 'bg-emerald-50/30' : ''}">
-                  <td class="py-3 px-4"><span class="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold ${idx === 0 ? 'bg-yellow-400 text-white' : idx < 4 ? 'bg-emerald-500 text-white' : 'bg-gray-200'}">${idx + 1}</span></td>
-                  <td class="py-3 px-4 font-semibold">${p.name}</td>
-                  <td class="py-3 px-2 text-center font-extrabold">${p.points}</td>
-                  <td class="py-3 px-2 text-center">${p.won}/${p.lost}</td>
-                  <td class="py-3 px-2 text-center font-semibold ${p.setsWon - p.setsLost > 0 ? 'text-emerald-600' : p.setsWon - p.setsLost < 0 ? 'text-red-500' : ''}">${p.setsWon - p.setsLost > 0 ? '+' : ''}${p.setsWon - p.setsLost}</td>
+              ${ranking.map((pl, idx) => {
+                const isQ = qualifying > 0 && idx < qualifying;
+                return `
+                <tr class="border-t hover:bg-gray-50 ${isQ ? 'bg-emerald-50/40' : ''}">
+                  <td class="py-3 px-4"><span class="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold ${idx === 0 ? 'bg-yellow-400 text-white' : isQ ? 'bg-emerald-500 text-white' : 'bg-gray-200'}">${idx + 1}</span></td>
+                  <td class="py-3 px-4 font-semibold">${pl.id === champ ? '🏆 ' : ''}${pl.name}</td>
+                  <td class="py-3 px-2 text-center text-gray-500">${pl.played}</td>
+                  <td class="py-3 px-2 text-center font-extrabold">${pl.points}</td>
+                  <td class="py-3 px-2 text-center">${pl.won}/${pl.lost}</td>
+                  <td class="py-3 px-2 text-center font-semibold ${pl.setsWon - pl.setsLost > 0 ? 'text-emerald-600' : pl.setsWon - pl.setsLost < 0 ? 'text-red-500' : ''}">${pl.setsWon - pl.setsLost > 0 ? '+' : ''}${pl.setsWon - pl.setsLost}</td>
                 </tr>
-              `).join('')}
+              `;
+              }).join('')}
             </tbody>
           </table>
         </div>
@@ -2278,8 +3710,26 @@
           </optgroup>
         </select>
       </div>
+      ${this.renderFormatBadge(this.currentCategory)}
       ${this.renderMatchesList(this.currentCategory, isAdmin)}
     `;
+        },
+
+        // Etiqueta de contexto de um jogo: grupo, mão e — na fase final — o nome da eliminatória.
+        matchTag(m) {
+          const bits = [];
+          if (m.phase === 'final') {
+            bits.push(`<span class="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold">${m.label || 'Fase final'}</span>`);
+          } else {
+            if (m.groupIdx !== null && m.groupIdx !== undefined) {
+              bits.push(`<span class="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 font-bold">Grupo ${this.groupName(m.groupIdx)}</span>`);
+            }
+            if ((m.leg || 1) === 2) {
+              bits.push(`<span class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-bold">2ª mão</span>`);
+            }
+          }
+          if (!bits.length) return '';
+          return `<div class="flex gap-1.5 justify-center mb-2 text-[10px]">${bits.join('')}</div>`;
         },
 
         renderMatchesList(catId, isAdmin) {
@@ -2310,7 +3760,7 @@
             return `
             <div class="bg-white rounded-2xl shadow-sm border overflow-hidden">
               <div class="p-4 bg-emerald-50 border-b flex items-center justify-between gap-2">
-                <div class="font-bold text-sm">Jornada ${j}</div>
+                <div class="font-bold text-sm">Jornada ${j}${this.jornadaPhase(catId, Number(j)) === 'final' ? ' <span class="ml-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] align-middle">Fase final</span>' : ''}</div>
                 ${dateStr ? `<div class="text-xs font-semibold text-emerald-700 whitespace-nowrap">📅 ${dateStr}</div>` : ''}
               </div>
               <div class="divide-y">
@@ -2337,6 +3787,7 @@
               const scoreStr = m.sets.filter(s => s.p1 !== null && s.p2 !== null).map(s => `${s.p1}-${s.p2}`).join('  ');
               return `
                     <div class="p-4">
+                      ${this.matchTag(m)}
                       <div class="flex items-center justify-between gap-2">
                         <div class="flex-1 text-right truncate min-w-0 ${winner === m.p1 ? 'text-emerald-700 font-bold' : 'font-semibold'}">${winner === m.p1 ? '🏆 ' : ''}${p1.name} ${m.p1 === myPlayerId ? '<span class="text-xs text-emerald-600">(tu)</span>' : ''}</div>
                         <div class="px-4 py-2 rounded-xl min-w-[110px] text-center whitespace-nowrap ${completed ? 'bg-emerald-50 text-emerald-800 font-mono font-bold' : 'bg-gray-50'}">
@@ -3208,36 +4659,349 @@
         },
 
         // Abre a escolha de qual torneio reiniciar.
-        resetData() {
-          const tenisCats = this.CATEGORIES.filter(c => c.sport === 'tenis');
-          const padelCats = this.CATEGORIES.filter(c => c.sport === 'padel');
+        // ============================================
+        // CÓPIA DE SEGURANÇA DOS INSCRITOS (exportar / importar)
+        // ============================================
+        // Colunas do ficheiro. A ordem é a que sai no Excel e é também a que a
+        // importação espera (procura pelo nome da coluna, não pela posição).
+        PLAYER_EXPORT_COLUMNS: [
+          'ID', 'Categoria (ID)', 'Categoria', 'Modalidade', 'Tipo', 'Nome', 'Email',
+          'Telemóvel', 'NIF', 'Morada', 'Jogador 2 - Nome', 'Jogador 2 - Email', 'Data de inscrição'
+        ],
+
+        playerToExportRow(pl, catId) {
+          const cat = this.CATEGORIES.find(c => c.id === catId);
+          return {
+            'ID': pl.id,
+            'Categoria (ID)': catId,
+            'Categoria': cat ? cat.name : catId,
+            'Modalidade': (pl.sport || cat?.sport) === 'padel' ? 'Padel' : 'Ténis',
+            'Tipo': pl.type === 'doubles' ? 'Duplas' : 'Singulares',
+            'Nome': pl.name || '',
+            'Email': pl.email || '',
+            'Telemóvel': pl.phone || '',
+            'NIF': pl.nif || '',
+            'Morada': pl.address || '',
+            'Jogador 2 - Nome': pl.partner?.name || '',
+            'Jogador 2 - Email': pl.partnerEmail || '',
+            'Data de inscrição': pl.registeredAt || ''
+          };
+        },
+
+        // Exporta TODOS os inscritos de TODAS as categorias.
+        exportPlayersExcel() {
+          if (this.currentUser?.role !== 'admin') return;
+          const rows = [];
+          this.CATEGORIES.forEach(cat => {
+            (this.state.categories[cat.id] || []).forEach(pl => rows.push(this.playerToExportRow(pl, cat.id)));
+          });
+          if (!rows.length) { alert('Não há jogadores inscritos para exportar.'); return; }
+          const ws = XLSX.utils.json_to_sheet(rows, { header: this.PLAYER_EXPORT_COLUMNS });
+          const wb = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(wb, ws, 'Jogadores');
+          const today = new Date().toISOString().slice(0, 10);
+          XLSX.writeFile(wb, `jogadores-emtp-${today}.xlsx`);
+        },
+
+        openImportPlayersModal() {
+          if (this.currentUser?.role !== 'admin') return;
+          this.pendingImport = null;
           this.openGenericModal(`
       <div class="p-6">
-        <div class="flex justify-between mb-4">
-          <h3 class="text-xl font-bold">🔄 Reiniciar Torneio</h3>
+        <div class="flex justify-between mb-1">
+          <h3 class="text-xl font-bold">⬆️ Importar jogadores</h3>
           <button onclick="app.closeGenericModal()" class="text-gray-400 text-2xl leading-none">×</button>
         </div>
-        <p class="text-sm text-gray-500 mb-4">Escolhe o torneio a reiniciar. As <strong>inscrições, jogos e resultados</strong> desse torneio são apagados e as <strong>vagas voltam a ${this.MAX_PER_CATEGORY}</strong>. As <strong>contas</strong> dos atletas são mantidas.</p>
-        <label class="block text-sm font-semibold text-gray-700 mb-1">Torneio</label>
-        <select id="resetCatSelect" class="w-full px-3 py-2 border rounded-lg mb-4">
-          <option value="all">🌐 Todos os torneios</option>
-          <optgroup label="🎾 Ténis">${tenisCats.map(c => `<option value="${c.id}">${c.icon} ${c.name}</option>`).join('')}</optgroup>
-          <optgroup label="🏆 Padel">${padelCats.map(c => `<option value="${c.id}">${c.icon} ${c.name}</option>`).join('')}</optgroup>
-        </select>
+        <p class="text-sm text-gray-500 mb-4">Escolhe um ficheiro exportado por esta app (.xlsx ou .csv).</p>
+        <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-900 mb-4">
+          ✅ A importação <strong>nunca apaga nada</strong>. Jogadores que já existam (mesmo ID) são atualizados;
+          os que faltarem são criados. Contas e passwords dos atletas ficam intactas — vivem à parte e não são tocadas.
+        </div>
+        <input id="importPlayersFile" type="file" accept=".xlsx,.xls,.csv"
+          onchange="app.readImportPlayersFile(this)"
+          class="w-full text-sm border border-gray-200 rounded-lg p-2 mb-4">
+        <div id="importPreview"></div>
+        <div id="importError" class="hidden text-sm text-red-600 font-semibold mb-3"></div>
         <div class="flex gap-2">
-          <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 rounded-lg font-semibold">Cancelar</button>
-          <button onclick="app.confirmResetTournament()" class="flex-1 btn-danger text-white px-4 py-2 rounded-lg font-semibold">Reiniciar</button>
+          <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">Cancelar</button>
+          <button id="importConfirmBtn" onclick="app.confirmImportPlayers()" disabled
+            class="flex-1 btn-primary text-white px-4 py-2 rounded-lg font-semibold opacity-40 cursor-not-allowed">Importar</button>
         </div>
       </div>
     `);
         },
 
-        async confirmResetTournament() {
-          const scope = document.getElementById('resetCatSelect').value;
+        // Lê o ficheiro e mostra um resumo do que vai acontecer, ANTES de escrever seja o que for.
+        readImportPlayersFile(input) {
+          const file = input.files && input.files[0];
+          const errorEl = document.getElementById('importError');
+          const previewEl = document.getElementById('importPreview');
+          const btn = document.getElementById('importConfirmBtn');
+          const fail = msg => {
+            this.pendingImport = null;
+            previewEl.innerHTML = '';
+            errorEl.textContent = msg;
+            errorEl.classList.remove('hidden');
+            btn.disabled = true;
+            btn.classList.add('opacity-40', 'cursor-not-allowed');
+          };
+          errorEl.classList.add('hidden');
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = e => {
+            try {
+              const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+              const sheet = wb.Sheets[wb.SheetNames[0]];
+              const raw = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+              if (!raw.length) return fail('O ficheiro não tem linhas.');
+              const parsed = this.parseImportRows(raw);
+              if (!parsed.valid.length) return fail('Nenhuma linha válida. ' + (parsed.errors[0] || 'Verifica se o ficheiro foi exportado por esta app.'));
+              this.pendingImport = parsed.valid;
+              previewEl.innerHTML = this.importPreviewHTML(parsed);
+              btn.disabled = false;
+              btn.classList.remove('opacity-40', 'cursor-not-allowed');
+            } catch (err) {
+              console.error(err);
+              fail('Não foi possível ler o ficheiro: ' + (err.message || err));
+            }
+          };
+          reader.onerror = () => fail('Erro ao ler o ficheiro.');
+          reader.readAsArrayBuffer(file);
+        },
+
+        // Converte as linhas do ficheiro em jogadores, separando o que é válido do que não é.
+        parseImportRows(raw) {
+          const valid = [], errors = [];
+          const byName = {};
+          this.CATEGORIES.forEach(c => { byName[c.name.toLowerCase()] = c.id; });
+          const txt = v => (v === null || v === undefined ? '' : String(v).trim());
+          raw.forEach((r, i) => {
+            const linha = i + 2;   // +1 do cabeçalho, +1 porque o Excel começa em 1
+            const name = txt(r['Nome']);
+            let catId = txt(r['Categoria (ID)']);
+            if (!catId) catId = byName[txt(r['Categoria']).toLowerCase()] || '';
+            if (!name) { errors.push(`Linha ${linha}: sem nome.`); return; }
+            const cat = this.CATEGORIES.find(c => c.id === catId);
+            if (!cat) { errors.push(`Linha ${linha}: categoria desconhecida ("${txt(r['Categoria (ID)']) || txt(r['Categoria'])}").`); return; }
+            const partnerName = txt(r['Jogador 2 - Nome']);
+            valid.push({
+              id: txt(r['ID']) || `${catId}-import-${Date.now()}-${i}`,
+              catId,
+              name,
+              type: txt(r['Tipo']).toLowerCase().indexOf('dupla') === 0 ? 'doubles' : (partnerName ? 'doubles' : 'single'),
+              sport: cat.sport,
+              email: txt(r['Email']).toLowerCase() || null,
+              phone: txt(r['Telemóvel']) || null,
+              nif: txt(r['NIF']) || null,
+              address: txt(r['Morada']) || null,
+              partnerName: partnerName || null,
+              partnerEmail: txt(r['Jogador 2 - Email']).toLowerCase() || null,
+              registeredAt: txt(r['Data de inscrição']) || null
+            });
+          });
+          // Duplicados dentro do próprio ficheiro: fica a última linha de cada ID.
+          const seen = new Map();
+          valid.forEach(v => seen.set(v.id, v));
+          return { valid: [...seen.values()], errors };
+        },
+
+        importPreviewHTML(parsed) {
+          const existing = new Set();
+          this.CATEGORIES.forEach(c => (this.state.categories[c.id] || []).forEach(pl => existing.add(pl.id)));
+          const novos = parsed.valid.filter(v => !existing.has(v.id)).length;
+          const atualizados = parsed.valid.length - novos;
+          const porCat = {};
+          parsed.valid.forEach(v => { porCat[v.catId] = (porCat[v.catId] || 0) + 1; });
+          // Categorias com torneio já iniciado: acrescentar gente aí deixa-a fora do sorteio.
+          const iniciadas = Object.keys(porCat).filter(c => this.getTournament(c).started)
+            .map(c => this.CATEGORIES.find(x => x.id === c)?.name || c);
+          return `
+      <div class="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900 mb-4">
+        <div class="font-bold mb-1">O que vai acontecer</div>
+        <div>• <strong>${novos}</strong> jogador(es) a criar</div>
+        <div>• <strong>${atualizados}</strong> já existente(s), serão atualizados</div>
+        <div class="mt-1">• Por categoria: ${Object.entries(porCat).map(([c, n]) => `${this.CATEGORIES.find(x => x.id === c)?.name || c}: ${n}`).join(' • ')}</div>
+        ${parsed.errors.length ? `<div class="mt-2 text-amber-800"><strong>${parsed.errors.length} linha(s) ignorada(s):</strong><br>${parsed.errors.slice(0, 5).map(e => this.escapeHtml(e)).join('<br>')}${parsed.errors.length > 5 ? '<br>…' : ''}</div>` : ''}
+        ${iniciadas.length ? `<div class="mt-2 text-amber-800">⚠️ Torneio já iniciado em: <strong>${iniciadas.join(', ')}</strong>. Quem for criado agora fica sem jogos — terás de refazer o sorteio dessa(s) categoria(s).</div>` : ''}
+      </div>`;
+        },
+
+        async confirmImportPlayers() {
+          if (this.currentUser?.role !== 'admin') return;
+          const rows = this.pendingImport;
+          if (!rows || !rows.length) return;
+          const errorEl = document.getElementById('importError');
+          const btn = document.getElementById('importConfirmBtn');
+          if (!confirm(`Importar ${rows.length} jogador(es)?\n\nNada é apagado: os que já existirem são atualizados.`)) return;
+          btn.disabled = true;
+          btn.textContent = 'A importar…';
+          try {
+            const payload = rows.map(v => ({
+              id: v.id,
+              cat_id: v.catId,
+              name: v.name,
+              type: v.type,
+              sport: v.sport,
+              email: v.email,
+              phone: v.phone,
+              nif: v.nif,
+              address: v.address,
+              partner_name: v.partnerName,
+              partner_email: v.partnerEmail,
+              registered_at: v.registeredAt || new Date().toISOString()
+            }));
+            // Em blocos, para ficheiros grandes não rebentarem o pedido.
+            for (let i = 0; i < payload.length; i += 100) {
+              const { error } = await sb.from('players').upsert(payload.slice(i, i + 100));
+              if (error) throw error;
+            }
+            await this.loadData();
+            this.closeGenericModal();
+            this.renderVacanciesOverview();
+            this.render();
+            alert(`✅ Importação concluída: ${rows.length} jogador(es).`);
+          } catch (error) {
+            console.error('Erro:', error);
+            btn.disabled = false;
+            btn.textContent = 'Importar';
+            errorEl.textContent = 'Erro ao importar: ' + (error.message || error);
+            errorEl.classList.remove('hidden');
+          }
+        },
+
+        // ============================================
+        // REINICIAR TORNEIO (fluxo por passos, sem diálogos do browser)
+        // ============================================
+        // O que vai ser apagado, para o admin ver antes de decidir.
+        resetImpact(scope) {
           const all = scope === 'all';
-          const cat = all ? null : this.CATEGORIES.find(c => c.id === scope);
-          const label = all ? 'TODOS os torneios' : `o torneio de ${cat?.name || scope}`;
-          if (!confirm(`Reiniciar ${label}?\n\n• Inscrições, jogos e resultados apagados (vagas voltam a ${this.MAX_PER_CATEGORY}).\n• Volta ao estado ABERTO.\n• As contas dos atletas são mantidas.`)) return;
+          const cats = all ? this.CATEGORIES.map(c => c.id) : [scope];
+          let atletas = 0, jogos = 0;
+          cats.forEach(id => {
+            atletas += (this.state.categories[id] || []).length;
+            jogos += (this.state.matches[id] || []).length;
+          });
+          const inscricoes = (this.state.inscriptions || []).filter(x => all || x.cat_id === scope).length;
+          const mensagens = all
+            ? Object.values(this.state.messages || {}).reduce((n, m) => n + m.length, 0)
+            : ((this.state.messages || {})[scope] || []).length;
+          const torneios = cats.filter(id => (this.state.tournaments || {})[id]).length;
+          return { all, cats, atletas, jogos, inscricoes, mensagens, torneios };
+        },
+
+        // Palavra que o admin tem de escrever para confirmar. Obriga a ler o que
+        // está a apagar — é a diferença entre um clique distraído e uma decisão.
+        resetConfirmWord(scope) {
+          if (scope === 'all') return 'TODOS';
+          const cat = this.CATEGORIES.find(c => c.id === scope);
+          return (cat ? cat.name : scope).toUpperCase();
+        },
+
+        resetScopeLabel(scope) {
+          if (scope === 'all') return 'TODOS os torneios';
+          const cat = this.CATEGORIES.find(c => c.id === scope);
+          return cat ? `${cat.icon} ${cat.name}` : scope;
+        },
+
+        // ---------- Passo 1: escolher o que reiniciar ----------
+        resetData() {
+          if (this.currentUser?.role !== 'admin') return;
+          const tenisCats = this.CATEGORIES.filter(c => c.sport === 'tenis');
+          const padelCats = this.CATEGORIES.filter(c => c.sport === 'padel');
+          this.pendingReset = null;
+          this.openGenericModal(`
+      <div class="p-6">
+        ${this.modalSteps('🔄 Reiniciar Torneio', 'Escolhe o que queres reiniciar.', 0, 3)}
+        <label class="block text-sm font-semibold text-gray-700 mb-1">Torneio</label>
+        <select id="resetCatSelect" onchange="app.refreshResetPreview()" class="w-full px-3 py-2 border rounded-lg mb-4">
+          <option value="all">🌐 Todos os torneios</option>
+          <optgroup label="🎾 Ténis">${tenisCats.map(c => `<option value="${c.id}">${c.icon} ${c.name}</option>`).join('')}</optgroup>
+          <optgroup label="🏆 Padel">${padelCats.map(c => `<option value="${c.id}">${c.icon} ${c.name}</option>`).join('')}</optgroup>
+        </select>
+        <div id="resetPreview"></div>
+        <div class="flex gap-2 mt-4">
+          <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">Cancelar</button>
+          <button onclick="app.showResetConfirm()" class="flex-1 btn-danger text-white px-4 py-2 rounded-lg font-semibold">Continuar →</button>
+        </div>
+      </div>
+    `);
+          this.refreshResetPreview();
+        },
+
+        refreshResetPreview() {
+          const box = document.getElementById('resetPreview');
+          if (!box) return;
+          const sel = document.getElementById('resetCatSelect');
+          const imp = this.resetImpact(sel ? sel.value : 'all');
+          const linha = (n, rotulo) => `<div class="flex justify-between py-1"><span class="text-gray-500">${rotulo}</span><strong>${n}</strong></div>`;
+          const nada = !imp.atletas && !imp.jogos && !imp.inscricoes && !imp.mensagens && !imp.torneios;
+          box.innerHTML = `
+      <div class="border rounded-xl p-4 text-sm ${nada ? 'bg-gray-50' : 'bg-red-50 border-red-200'}">
+        <div class="text-xs font-bold ${nada ? 'text-gray-400' : 'text-red-700'} uppercase mb-2">${nada ? 'Nada para apagar' : 'Vai apagar'}</div>
+        ${nada ? '<p class="text-gray-500 text-xs">Este torneio já está vazio.</p>' : `
+          ${linha(imp.atletas, 'Atletas inscritos')}
+          ${linha(imp.jogos, 'Jogos e resultados')}
+          ${linha(imp.inscricoes, 'Formulários de inscrição')}
+          ${linha(imp.mensagens, 'Mensagens de chat')}
+          ${linha(imp.torneios, 'Configurações de torneio (datas, formato, lotação)')}
+        `}
+      </div>
+      <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-900 mt-3">
+        ✅ As <strong>contas e passwords</strong> dos atletas <strong>não</strong> são apagadas — voltam a poder inscrever-se com o mesmo login.
+      </div>`;
+        },
+
+        // ---------- Passo 2: confirmar escrevendo ----------
+        showResetConfirm() {
+          const sel = document.getElementById('resetCatSelect');
+          const scope = sel ? sel.value : 'all';
+          const imp = this.resetImpact(scope);
+          const palavra = this.resetConfirmWord(scope);
+          this.pendingReset = { scope, imp, palavra };
+          this.setModalContent(`
+      <div class="p-6">
+        ${this.modalSteps('⚠️ Confirmar o reinício', `Vais reiniciar <strong>${this.resetScopeLabel(scope)}</strong>`, 1, 3)}
+        <div class="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-900 mb-4">
+          <div class="font-bold mb-1">Isto não se pode desfazer.</div>
+          Vão ser apagados <strong>${imp.atletas}</strong> atleta(s), <strong>${imp.jogos}</strong> jogo(s),
+          <strong>${imp.inscricoes}</strong> formulário(s) e <strong>${imp.mensagens}</strong> mensagem(ns)${imp.all ? ', em todas as categorias' : ''}.
+        </div>
+        <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 mb-4">
+          <strong>Antes de continuar:</strong> guarda uma cópia dos inscritos. Depois podes repô-los com “Importar jogadores”.
+          <button onclick="app.exportPlayersExcel()" class="mt-2 block w-full bg-white border border-amber-300 hover:bg-amber-100 rounded-lg px-3 py-1.5 font-bold text-amber-800">⬇️ Exportar jogadores agora</button>
+        </div>
+        <label class="block text-sm font-semibold text-gray-700 mb-1">Para confirmar, escreve <code class="bg-gray-100 px-1.5 py-0.5 rounded font-mono text-red-700">${this.escapeHtml(palavra)}</code></label>
+        <input id="resetConfirmWord" type="text" autocomplete="off" oninput="app.refreshResetConfirmButton()"
+          class="w-full px-3 py-2 border border-gray-200 rounded-lg mb-4 font-mono" placeholder="${this.escapeHtml(palavra)}">
+        <div class="flex gap-2">
+          <button onclick="app.resetData()" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">← Voltar</button>
+          <button id="resetConfirmBtn" onclick="app.confirmResetTournament()" disabled
+            class="flex-1 btn-danger text-white px-4 py-2 rounded-lg font-semibold opacity-40 cursor-not-allowed">Reiniciar definitivamente</button>
+        </div>
+      </div>
+    `);
+        },
+
+        refreshResetConfirmButton() {
+          const input = document.getElementById('resetConfirmWord');
+          const btn = document.getElementById('resetConfirmBtn');
+          if (!input || !btn || !this.pendingReset) return;
+          const ok = input.value.trim().toUpperCase() === this.pendingReset.palavra;
+          btn.disabled = !ok;
+          btn.classList.toggle('opacity-40', !ok);
+          btn.classList.toggle('cursor-not-allowed', !ok);
+        },
+
+        // ---------- Passo 3: apagar ----------
+        async confirmResetTournament() {
+          const pendente = this.pendingReset;
+          if (!pendente) return;
+          // Cinto de segurança: a palavra tem de bater certo mesmo que o botão seja forçado.
+          const input = document.getElementById('resetConfirmWord');
+          if (input && input.value.trim().toUpperCase() !== pendente.palavra) return;
+          const { scope, imp } = pendente;
+          const all = scope === 'all';
+          this.setModalContent(this.modalBusy('A reiniciar…', 'A apagar os dados. Não feches a janela.'));
           try {
             if (all) {
               await sb.from('matches').delete().neq('id', '0');
@@ -3253,12 +5017,36 @@
               await sb.from('messages').delete().eq('channel_id', scope);
             }
             // accounts e player_logins NÃO são apagados — as contas persistem.
-            this.closeGenericModal();
-            alert(`Reiniciado: ${label}. As contas dos atletas foram mantidas.`);
-            location.reload();
+            await this.loadData();
+            this.pendingReset = null;
+            // As listas voltam ao início (a pesquisa e a página deixaram de fazer sentido).
+            this.inscritosSearch = ''; this.inscritosPage = 0; this.inscricoesPage = 0;
+            this.usersSearch = ''; this.usersPage = 0;
+            this.render();
+            this.renderVacanciesOverview();
+            this.setModalContent(`
+      <div class="p-6">
+        ${this.modalSteps('✅ Reinício concluído', `${this.resetScopeLabel(scope)}`, 2, 3)}
+        <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-sm text-emerald-900 mb-4">
+          Apagados <strong>${imp.atletas}</strong> atleta(s), <strong>${imp.jogos}</strong> jogo(s),
+          <strong>${imp.inscricoes}</strong> formulário(s) e <strong>${imp.mensagens}</strong> mensagem(ns).
+          ${all ? 'Todas as categorias voltaram' : 'A categoria voltou'} ao estado <strong>aberto</strong>, com as inscrições novamente disponíveis.
+        </div>
+        <div class="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900 mb-4">
+          As contas dos atletas foram mantidas. Se precisares de repor os inscritos, usa <strong>Importar jogadores</strong> no Dashboard com o ficheiro que exportaste.
+        </div>
+        <div class="flex gap-2">
+          <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">Fechar</button>
+          <button onclick="app.closeGenericModal(); app.switchTab('categorias')" class="flex-1 btn-primary text-white px-4 py-2 rounded-lg font-semibold">Ver categorias →</button>
+        </div>
+      </div>
+    `);
           } catch (error) {
             console.error('Erro:', error);
-            alert('Erro ao reiniciar: ' + (error.message || error));
+            this.setModalContent(this.modalErro(
+              'O reinício não ficou concluído',
+              error.message || String(error),
+              'Tentar de novo', 'app.confirmResetTournament()'));
           }
         },
 
@@ -3271,6 +5059,53 @@
         },
 
         closeGenericModal() { document.getElementById('modal').classList.add('hidden'); },
+
+        // Troca o conteúdo do modal sem o fechar — é assim que os fluxos avançam de passo.
+        setModalContent(html) {
+          const el = document.getElementById('modalContent');
+          if (el) el.innerHTML = html;
+        },
+
+        // Cabeçalho comum dos fluxos por passos, com indicador de progresso.
+        modalSteps(titulo, subtitulo, passo, total, fechavel) {
+          const bolas = Array.from({ length: total }, (_, i) => {
+            const estado = i < passo ? 'bg-emerald-600' : i === passo ? 'bg-emerald-600 ring-4 ring-emerald-100' : 'bg-gray-200';
+            return `<span class="w-2.5 h-2.5 rounded-full ${estado}"></span>`;
+          }).join('<span class="w-6 h-px bg-gray-200"></span>');
+          return `
+      <div class="flex justify-between items-start mb-1">
+        <h3 class="text-xl font-bold">${titulo}</h3>
+        ${fechavel === false ? '' : '<button onclick="app.closeGenericModal()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>'}
+      </div>
+      ${subtitulo ? `<p class="text-sm text-gray-500">${subtitulo}</p>` : ''}
+      <div class="flex items-center gap-1.5 my-4">${bolas}</div>`;
+        },
+
+        // Ecrã de espera dentro do modal (enquanto grava na base de dados).
+        modalBusy(titulo, texto) {
+          return `
+      <div class="p-10 text-center">
+        <div class="inline-block w-10 h-10 border-4 border-emerald-200 border-t-emerald-600 rounded-full animate-spin mb-4"></div>
+        <div class="font-bold text-gray-900">${titulo}</div>
+        <p class="text-sm text-gray-500 mt-1">${texto}</p>
+      </div>`;
+        },
+
+        // Erro dentro do modal, com a ação para tentar de novo.
+        modalErro(titulo, mensagem, acaoLabel, acao) {
+          return `
+      <div class="p-6">
+        <div class="text-center mb-4">
+          <div class="text-5xl mb-3">⚠️</div>
+          <div class="font-bold text-gray-900">${titulo}</div>
+          <p class="text-sm text-red-600 mt-2 break-words">${this.escapeHtml(mensagem)}</p>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">Fechar</button>
+          <button onclick="${acao}" class="flex-1 btn-primary text-white px-4 py-2 rounded-lg font-semibold">${acaoLabel}</button>
+        </div>
+      </div>`;
+        },
 
         openAddPlayerModal() {
           const tenisCats = this.CATEGORIES.filter(c => c.sport === 'tenis');
@@ -3624,60 +5459,169 @@
           }
         },
 
-        renderPlayoffs() {
+        // ============================================
+        // FASE FINAL (separador)
+        // ============================================
+        renderFaseFinal() {
+          const isAdmin = this.currentUser.role === 'admin';
           const catId = this.currentCategory;
           const cat = this.CATEGORIES.find(c => c.id === catId);
-          const started = !!this.getTournament(catId)?.started;
-          const matches = this.state.matches[catId] || [];
-          const groupDone = matches.length > 0 && matches.every(m => m.completed);
-          const ranking = this.getRanking(catId);
-          const top4 = ranking.slice(0, 4);
-          const nm = p => p ? p.name : '—';
-          const tabs = `
-      <div class="flex gap-2 mb-4 flex-wrap">
-        ${this.CATEGORIES.map(c => `
-          <button onclick="app.currentCategory='${c.id}'; app.render()" class="px-4 py-2 rounded-lg font-semibold text-sm ${this.currentCategory === c.id ? 'bg-emerald-600 text-white' : 'bg-white border'}">${c.icon} ${c.name}</button>
-        `).join('')}
+          const t = this.getTournament(catId);
+          const players = this.state.categories[catId] || [];
+          const nameOf = id => (players.find(pl => pl.id === id) || {}).name || '—';
+          const tenisCats = this.CATEGORIES.filter(c => c.sport === 'tenis');
+          const padelCats = this.CATEGORIES.filter(c => c.sport === 'padel');
+          const header = `
+      <div class="mb-4 flex justify-between items-center flex-wrap gap-3">
+        <h2 class="text-2xl font-extrabold">Fase Final</h2>
+        <select onchange="app.currentCategory=this.value; app.render()" class="px-4 py-2 border rounded-lg font-semibold text-sm">
+          <optgroup label="🎾 Ténis">
+            ${tenisCats.map(c => `<option value="${c.id}" ${catId === c.id ? 'selected' : ''}>${c.icon} ${c.name}</option>`).join('')}
+          </optgroup>
+          <optgroup label="🏆 Padel">
+            ${padelCats.map(c => `<option value="${c.id}" ${catId === c.id ? 'selected' : ''}>${c.icon} ${c.name}</option>`).join('')}
+          </optgroup>
+        </select>
+      </div>
+      <div class="mb-4 text-gray-400 font-semibold">${cat.icon} ${cat.name}</div>`;
+
+          const box = (emoji, text, sub) => `
+      <div class="bg-white rounded-2xl p-8 text-center text-gray-500 border">
+        <div class="text-5xl mb-3">${emoji}</div>
+        <p class="font-semibold text-gray-700">${text}</p>
+        ${sub ? `<p class="text-sm mt-2">${sub}</p>` : ''}
       </div>`;
-          let body;
-          if (!started) {
-            body = `<div class="bg-white rounded-2xl p-8 text-center text-gray-500"><div class="text-5xl mb-3">📅</div><p>Torneio ainda não iniciado nesta categoria.</p></div>`;
-          } else if (top4.length < 4) {
-            body = `<div class="bg-white rounded-2xl p-8 text-center text-gray-500"><div class="text-5xl mb-3">👥</div><p>São precisos pelo menos 4 participantes para os playoffs.</p></div>`;
-          } else {
-            const matchCard = (title, a, b, color) => `
-        <div class="bg-white rounded-2xl shadow-sm border overflow-hidden">
-          <div class="bg-gradient-to-r ${color} p-3 text-white text-sm font-bold">${title}</div>
-          <div class="p-4 space-y-2">
-            <div class="flex items-center justify-between"><span class="font-semibold">${nm(a)}</span></div>
-            <div class="text-center text-xs text-gray-400">vs</div>
-            <div class="flex items-center justify-between"><span class="font-semibold">${nm(b)}</span></div>
-          </div>
-        </div>`;
-            body = `
-        <div class="${groupDone ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'} border rounded-xl p-3 mb-4 text-sm ${groupDone ? 'text-emerald-800' : 'text-amber-800'}">
-          ${groupDone ? '✅ Fase de grupos concluída — apuramento final.' : '⏳ Fase de grupos a decorrer — apuramento provisório (posições podem mudar).'}
-        </div>
-        <div class="bg-white rounded-2xl shadow-sm border p-4 mb-4">
-          <div class="text-xs font-bold text-gray-400 uppercase mb-2">Apurados (Top 4)</div>
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
-            ${top4.map((p, i) => `<div class="p-3 rounded-xl ${i === 0 ? 'bg-yellow-100' : 'bg-gray-50'} text-center"><div class="text-lg font-extrabold">${i + 1}º</div><div class="text-sm font-semibold truncate">${p.name}</div></div>`).join('')}
-          </div>
-        </div>
-        <div class="grid md:grid-cols-2 gap-4 mb-4">
-          ${matchCard('Meia-final 1 (1º vs 4º)', top4[0], top4[3], 'from-amber-500 to-amber-700')}
-          ${matchCard('Meia-final 2 (2º vs 3º)', top4[1], top4[2], 'from-amber-500 to-amber-700')}
-        </div>
-        <div class="grid md:grid-cols-2 gap-4">
-          ${matchCard('🏆 Grande Final', { name: 'Vencedor MF1' }, { name: 'Vencedor MF2' }, 'from-red-500 to-red-700')}
-          ${matchCard('3º/4º Lugar', { name: 'Perdedor MF1' }, { name: 'Perdedor MF2' }, 'from-gray-400 to-gray-600')}
-        </div>`;
+
+          if (!t.started) return header + box('📅', 'Torneio ainda não iniciado nesta categoria.', isAdmin ? 'Vai a <strong>Calendário</strong> para definir as datas e iniciar o torneio.' : '');
+          if (t.numGroups < 2 || t.finalType === 'none') {
+            const champ = this.champion(catId);
+            return header + this.renderFormatBadge(catId) + box(
+              champ ? '🏆' : '📋',
+              champ ? `Campeão: ${nameOf(champ)}` : 'Esta categoria joga-se em grupo único, sem fase final.',
+              champ ? 'Apurado pela classificação final do grupo.' : 'O vencedor é o 1º classificado da tabela. Vê o separador <strong>Classificação</strong>.'
+            );
           }
+
+          const action = this.finalPhaseAction(catId);
+          const adminBtn = (isAdmin && action)
+            ? `<div class="mb-4"><button onclick="app.advanceFinalPhase('${catId}')" class="btn-primary text-white px-5 py-2.5 rounded-lg font-bold text-sm">${action}</button></div>`
+            : '';
+
+          if (!t.finalStarted) {
+            const done = this.groupPhaseComplete(catId);
+            const prev = this.computeQualifierSeeds(catId);
+            return header + this.renderFormatBadge(catId) + adminBtn + `
+        <div class="${done ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-amber-50 border-amber-200 text-amber-800'} border rounded-xl p-3 mb-4 text-sm">
+          ${done ? '✅ Fase de grupos concluída — a fase final pode ser gerada.' : '⏳ Fase de grupos a decorrer — o apuramento abaixo é provisório e pode ainda mudar.'}
+        </div>
+        ${this.renderQualifiersCard(catId, prev, nameOf)}`;
+          }
+
+          const champ = this.champion(catId);
+          let body = '';
+          if (t.finalType === 'minigroup') {
+            body = this.renderClassificationTable(catId, { phase: 'final', playerIds: t.finalSeeds || [], title: '🏁 Mini-grupo Final' })
+              + `<div class="mt-4">${this.renderFinalMatchesCard(catId, nameOf)}</div>`;
+          } else {
+            body = this.renderBracket(catId, nameOf) + `<div class="mt-4">${this.renderFinalMatchesCard(catId, nameOf)}</div>`;
+          }
+          return header + this.renderFormatBadge(catId) + adminBtn + `
+      ${champ ? `<div class="bg-gradient-to-r from-yellow-400 to-amber-500 text-white rounded-2xl p-5 mb-4 text-center shadow"><div class="text-3xl">🏆</div><div class="text-xs uppercase font-bold text-white/80 mt-1">Campeão</div><div class="text-2xl font-extrabold">${nameOf(champ)}</div></div>` : ''}
+      ${this.renderQualifiersCard(catId, t.finalSeeds || [], nameOf)}
+      <div class="mt-4">${body}</div>`;
+        },
+
+        renderQualifiersCard(catId, seeds, nameOf) {
+          const t = this.getTournament(catId);
+          if (!seeds.length) return '';
+          const q = t.finalType === 'single' ? 1 : t.qualifiersPerGroup;
           return `
-      <div class="mb-4 flex items-center gap-2"><h2 class="text-2xl font-extrabold">Playoffs</h2><span class="text-gray-400 font-semibold">${cat.icon} ${cat.name}</span></div>
-      ${tabs}
-      ${body}
-    `;
+      <div class="bg-white rounded-2xl shadow-sm border p-4">
+        <div class="text-xs font-bold text-gray-400 uppercase mb-2">Apurados (${q} por grupo)</div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+          ${seeds.map((id, i) => {
+            const g = this.playerGroup(catId, id);
+            const pos = Math.floor(i / t.numGroups) + 1;
+            return `<div class="p-3 rounded-xl ${i === 0 ? 'bg-yellow-100' : 'bg-gray-50'} text-center">
+              <div class="text-[10px] font-bold text-gray-500 uppercase">${pos}º do Grupo ${g === null ? '?' : this.groupName(g)}</div>
+              <div class="text-sm font-semibold truncate">${nameOf(id)}</div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`;
+        },
+
+        // Quadro eliminatório ronda a ronda (inclui quem passa sem jogar).
+        renderBracket(catId, nameOf) {
+          const t = this.getTournament(catId);
+          const totalRounds = this.bracketTotalRounds(catId);
+          const size = this.nextPowerOfTwo((t.finalSeeds || []).length);
+          const finals = this.finalMatchesOf(catId);
+          const cols = [];
+          for (let r = 0; r < totalRounds; r++) {
+            const slots = this.bracketSlots(catId, r);
+            const teamsInRound = size / Math.pow(2, r);
+            const label = this.bracketRoundLabel(teamsInRound);
+            const pairs = [];
+            for (let k = 0; k < slots.length; k += 2) pairs.push([slots[k], slots[k + 1]]);
+            const cards = pairs.map(([a, b]) => {
+              if (!a && !b) return '';
+              // "Passa sem jogar" só faz sentido na 1ª ronda (bye do sorteio); nas rondas
+              // seguintes, um lado por preencher está apenas à espera do jogo anterior.
+              if (r === 0 && (!a || !b)) return `<div class="border rounded-xl p-3 bg-gray-50 text-xs"><div class="font-bold">${nameOf(a || b)}</div><div class="text-gray-400">passa sem jogar</div></div>`;
+              const winner = (a && b) ? this.tieResult(catId, r, a, b, false) : null;
+              const score = (a && b) ? this.tieScore(catId, r, a, b, false) : '';
+              // `id` pode ser null (vaga por decidir) — daí a comparação exigir id preenchido.
+              const side = id => `<div class="flex justify-between gap-2 ${id && winner === id ? 'font-extrabold text-emerald-700' : 'font-semibold'}">
+                  <span class="truncate">${id ? nameOf(id) : '<span class=\"text-gray-300\">por decidir</span>'}</span>
+                  ${id && winner === id ? '<span>🏆</span>' : ''}
+                </div>`;
+              return `<div class="border rounded-xl p-3 ${winner ? 'bg-emerald-50/50 border-emerald-200' : 'bg-white'} text-sm">
+                ${side(a)}
+                <div class="text-[10px] text-gray-400 text-center my-1">${score || 'vs'}</div>
+                ${side(b)}
+              </div>`;
+            }).filter(Boolean).join('');
+            cols.push(`<div class="min-w-[200px] flex-1">
+              <div class="text-xs font-bold text-amber-600 uppercase mb-2">${label}</div>
+              <div class="space-y-2">${cards || '<div class="text-xs text-gray-400">—</div>'}</div>
+            </div>`);
+          }
+          const third = finals.find(m => this.isThirdPlace(m));
+          const thirdScore = third ? this.tieScore(catId, third.roundIdx, third.p1, third.p2, true) : '';
+          const thirdCard = third ? `
+        <div class="mt-4 border rounded-xl p-3 bg-gray-50 text-sm max-w-xs">
+          <div class="text-xs font-bold text-gray-500 uppercase mb-1">${this.THIRD_PLACE_LABEL}</div>
+          <div class="flex justify-between"><span>${nameOf(third.p1)}</span><span>${nameOf(third.p2)}</span></div>
+          ${thirdScore ? `<div class="text-[10px] text-gray-400 text-center mt-1">${thirdScore}</div>` : ''}
+        </div>` : '';
+          return `
+      <div class="bg-white rounded-2xl shadow-sm border p-4">
+        <div class="flex gap-4 overflow-x-auto pb-2">${cols.join('')}</div>
+        ${thirdCard}
+      </div>`;
+        },
+
+        // Lista dos jogos da fase final com o estado de cada um (quem ainda tem de registar).
+        renderFinalMatchesCard(catId, nameOf) {
+          const finals = this.finalMatchesOf(catId);
+          if (!finals.length) return '';
+          return `
+      <div class="bg-white rounded-2xl shadow-sm border p-4">
+        <div class="text-xs font-bold text-gray-400 uppercase mb-2">Jogos da fase final</div>
+        <div class="divide-y">
+          ${finals.map(m => {
+            const done = this.isMatchComplete(m);
+            const score = m.sets.filter(x => x.p1 !== null && x.p2 !== null).map(x => `${x.p1}-${x.p2}`).join(' ');
+            return `<div class="py-2 flex items-center justify-between gap-2 text-sm">
+              <span class="text-xs font-bold text-amber-700 w-32 flex-shrink-0">${m.label || ''}</span>
+              <span class="flex-1 truncate">${nameOf(m.p1)} vs ${nameOf(m.p2)}</span>
+              <span class="font-mono text-xs ${done ? 'text-emerald-700 font-bold' : 'text-gray-400'}">${done ? score : 'por jogar'}</span>
+            </div>`;
+          }).join('')}
+        </div>
+        <p class="text-xs text-gray-500 mt-3">Os resultados registam-se como nos restantes jogos, no separador <strong>Resultados</strong>.</p>
+      </div>`;
         },
 
         renderRegulamento() {
