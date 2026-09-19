@@ -750,6 +750,26 @@
               return ok(null);
             }
             if (fn === 'change_login_password') return ok(true);
+            if (fn === 'admin_change_account_email' || fn === 'change_own_account_email') {
+              // Espelha a função do Supabase: valida, verifica duplicados e arrasta
+              // o email para as participações. No demo a password é sempre "demo".
+              const erro = m => Promise.resolve({ data: null, error: { message: m } });
+              const antigo = String(args.p_old_email || args.p_email || '').toLowerCase().trim();
+              const novo = String(args.p_new_email || '').toLowerCase().trim();
+              if (fn === 'change_own_account_email' && args.p_password !== 'demo') return erro('Password incorreta.');
+              if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(novo)) return erro('Email inválido.');
+              if (antigo === novo) return ok(null);
+              if ((db.accounts || []).some(a => String(a.email).toLowerCase() === novo)) {
+                return erro('Já existe uma conta com o email ' + novo + '.');
+              }
+              (db.accounts || []).forEach(a => { if (String(a.email).toLowerCase() === antigo) a.email = novo; });
+              (db.players || []).forEach(pl => {
+                if (String(pl.email || '').toLowerCase() === antigo) pl.email = novo;
+                if (String(pl.partner_email || '').toLowerCase() === antigo) pl.partner_email = novo;
+              });
+              save();
+              return ok(null);
+            }
             return ok(null);   // create_login, admin_reset_login, …
           }
         };
@@ -821,6 +841,8 @@
         pendingDraw: null,      // configuração escolhida no passo 1 do sorteio
         pendingFinal: null,     // apurados fixados no passo 1 da fase final
         pendingReset: null,     // âmbito escolhido no passo 1 do reinício
+        quickCat: null,         // categoria escolhida na inscrição rápida
+        editingAccount: null,   // conta a ser editada (admin ou próprio)
         currentTab: 'dashboard',
         currentCategory: 'tenis-senior-masc',
         currentJornadaFilter: 'all',
@@ -1171,6 +1193,53 @@
         },
 
         // O admin repõe a password de uma conta (por email, sem saber a antiga).
+        // Altera o email de uma conta. É feito numa função no Supabase porque tem de
+        // mexer em accounts, player_logins e players de uma só vez (ver schema).
+        async changeAccountEmail(oldEmail, newEmail, { asAdmin, password }) {
+          const { error } = asAdmin
+            ? await sb.rpc('admin_change_account_email', { p_old_email: oldEmail, p_new_email: newEmail })
+            : await sb.rpc('change_own_account_email', { p_email: oldEmail, p_password: password, p_new_email: newEmail });
+          if (error) throw error;
+        },
+
+        // Grava os dados da conta (nome, NIF, morada, telemóvel).
+        async saveAccountFields(email, dados) {
+          const e = (email || '').toLowerCase();
+          const { error } = await sb.from('accounts').upsert([{
+            email: e, name: dados.name, nif: dados.nif, address: dados.address, phone: dados.phone
+          }]);
+          if (error) throw error;
+          this.state.accounts[e] = { email: e, ...dados };
+        },
+
+        // O nome e os contactos estão copiados nas participações (é o que aparece na
+        // classificação e nos jogos), por isso têm de acompanhar a alteração.
+        // Numa dupla, o nome da linha é "Jogador 1 & Jogador 2" e só muda a metade certa.
+        async propagateAccountToPlayers(email, dados) {
+          const e = (email || '').toLowerCase();
+          for (const [catId, players] of Object.entries(this.state.categories)) {
+            for (const pl of players) {
+              const ehJogador1 = (pl.email || '').toLowerCase() === e;
+              const ehJogador2 = (pl.partnerEmail || '').toLowerCase() === e;
+              if (!ehJogador1 && !ehJogador2) continue;
+              let update, locais;
+              if (ehJogador1) {
+                const nome = (pl.type === 'doubles' && pl.partner?.name)
+                  ? `${dados.name} & ${pl.partner.name}` : dados.name;
+                update = { name: nome, nif: dados.nif || null, address: dados.address || null, phone: dados.phone || null };
+                locais = { name: nome, nif: dados.nif, address: dados.address, phone: dados.phone };
+              } else {
+                const primeiro = (pl.name || '').split(' & ')[0];
+                update = { partner_name: dados.name, name: `${primeiro} & ${dados.name}` };
+                locais = { partner: { name: dados.name }, name: `${primeiro} & ${dados.name}` };
+              }
+              const { error } = await sb.from('players').update(update).eq('id', pl.id);
+              if (error) throw error;
+              Object.assign(pl, locais);
+            }
+          }
+        },
+
         async adminResetLogin(email, newPassword) {
           const { error } = await sb.rpc('admin_reset_login', {
             p_email: email,
@@ -1484,7 +1553,7 @@
         // ============================================
         // Gera "nome.sobrenome@emtp.com" a partir do nome do atleta.
         // Se o email já existir noutro atleta, acrescenta um número (nome.sobrenome1@emtp.com, ...).
-        generatePlayerEmail(fullName) {
+        generatePlayerEmail(fullName, reservados) {
           const normalize = s => s
             .normalize('NFD').replace(/[̀-ͯ]/g, '')
             .toLowerCase()
@@ -1494,9 +1563,14 @@
           const first = parts[0] || 'atleta';
           const last = parts.length > 1 ? parts[parts.length - 1] : first;
           const base = `${first}.${last}`;
-          const existingEmails = new Set(
-            Object.values(this.state.categories).flat().map(p => (p.email || '').toLowerCase())
-          );
+          // Emails já ocupados: participações (incluindo 2os jogadores), contas
+          // existentes e os que foram reservados nesta mesma operação.
+          const existingEmails = new Set();
+          Object.values(this.state.categories).flat().forEach(p => {
+            [p.email, p.partnerEmail].filter(Boolean).forEach(e => existingEmails.add(e.toLowerCase()));
+          });
+          Object.keys(this.state.accounts || {}).forEach(e => existingEmails.add(e.toLowerCase()));
+          (reservados || []).forEach(e => existingEmails.add((e || '').toLowerCase()));
           let candidate = `${base}@emtp.com`;
           let n = 1;
           while (existingEmails.has(candidate)) {
@@ -1841,9 +1915,10 @@
           <div class="text-3xl mb-2"></div>
           <div class="font-bold">Nova Inscrição</div>
         </button>
-        <button onclick="app.openAddPlayerModal()" class="btn-admin text-white rounded-2xl p-5 text-left card-hover shadow-md">
-          <div class="text-3xl mb-2"></div>
-          <div class="font-bold">Adicionar Utilizador</div>
+        <button onclick="app.openQuickInscription()" class="btn-admin text-white rounded-2xl p-5 text-left card-hover shadow-md">
+          <div class="text-3xl mb-2">➕</div>
+          <div class="font-bold">Inscrever Atleta</div>
+          <div class="text-xs text-white/80 mt-0.5">Modalidade, categoria e nomes</div>
         </button>
         <button onclick="app.switchTab('chat')" class="btn-chat text-white rounded-2xl p-5 text-left card-hover shadow-md relative">
           <div class="text-3xl mb-2">💬</div>
@@ -1907,7 +1982,7 @@
           return `
       <div class="mb-6 flex items-center justify-between flex-wrap gap-3">
         <h2 class="text-2xl font-extrabold text-gray-900">Utilizadores <span class="text-base font-semibold text-gray-400">(${total})</span></h2>
-        <button onclick="app.openAddPlayerModal()" class="btn-admin text-white px-4 py-2 rounded-lg font-semibold text-sm">+ Adicionar Utilizador</button>
+        <button onclick="app.openQuickInscription()" class="btn-inscription text-white px-4 py-2 rounded-lg font-semibold text-sm">➕ Inscrever Atleta</button>
       </div>
       <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         <div class="p-4 pb-0">
@@ -1981,6 +2056,7 @@
                   <div class="text-xs text-gray-400 truncate">${this.escapeHtml(partsLabel)}</div>
                 </div>
                 <div class="flex items-center gap-3 flex-shrink-0">
+                  <button onclick="app.openEditAccountModal('${emailAttr}')" class="text-emerald-600 text-xs font-semibold whitespace-nowrap">✏️ Editar</button>
                   <button onclick="app.openAccountPasswordModal('${emailAttr}')" class="text-blue-500 text-xs font-semibold whitespace-nowrap">🔑 Password</button>
                   <button onclick="app.removeAccount('${emailAttr}')" class="text-red-500 text-xs font-semibold whitespace-nowrap">🗑 Remover</button>
                 </div>
@@ -2359,6 +2435,7 @@
             <div class="text-4xl mb-3">📝</div>
             <p class="text-gray-600 mb-4">Tens conta na aplicação, mas ainda não estás inscrito em nenhum torneio aberto.</p>
             <button onclick="app.openInscription()" class="w-full btn-inscription text-white px-4 py-3 rounded-lg font-bold mb-3">Inscrever-me num torneio</button>
+            <button onclick="app.openEditAccountModal(app.currentUser.email, 'self')" class="w-full bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 rounded-lg p-3 font-semibold mb-3">✏️ Os meus dados</button>
             <button onclick="app.openChangePasswordModal()" class="w-full bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 rounded-lg p-3 font-semibold">🔑 Alterar Password</button>
           </div>
         </div>
@@ -2390,6 +2467,9 @@
         <button onclick="app.switchTab('chat')" class="w-full btn-chat text-white rounded-2xl p-5 font-bold flex items-center justify-center gap-2 mb-3">
           💬 Ir para o Chat da Categoria
         </button>
+        <button onclick="app.openEditAccountModal(app.currentUser.email, 'self')" class="w-full bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 rounded-2xl p-4 font-semibold flex items-center justify-center gap-2 mb-3">
+          ✏️ Os meus dados
+        </button>
         <button onclick="app.openChangePasswordModal()" class="w-full bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 rounded-2xl p-4 font-semibold flex items-center justify-center gap-2">
           🔑 Alterar Password
         </button>
@@ -2400,6 +2480,137 @@
         // ============================================
         // PASSWORD
         // ============================================
+        // ============================================
+        // EDITAR DADOS DE UMA CONTA
+        // ============================================
+        // O mesmo formulário serve o admin (edita qualquer conta, pode repor a
+        // password) e o próprio utilizador (edita a sua, e para mudar o email tem de
+        // confirmar a password atual).
+        openEditAccountModal(email, modo) {
+          const eu = modo === 'self';
+          if (!eu && this.currentUser?.role !== 'admin') return;
+          const e = (email || '').toLowerCase();
+          if (eu && (this.currentUser?.email || '').toLowerCase() !== e) return;
+          const acc = this.state.accounts[e] || { email: e, name: '', nif: '', address: '', phone: '' };
+          this.editingAccount = { email: e, modo };
+          const campo = (id, rotulo, valor, tipo, placeholder) => `
+        <div>
+          <label class="block text-xs font-semibold text-gray-700 mb-1">${rotulo}</label>
+          <input id="${id}" type="${tipo || 'text'}" value="${this.escapeHtml(valor || '')}" placeholder="${placeholder || ''}"
+            autocomplete="off" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+        </div>`;
+          this.openGenericModal(`
+      <div class="p-6">
+        ${this.modalSteps(eu ? '✏️ Os meus dados' : '✏️ Editar utilizador', eu ? 'Altera os teus dados de conta.' : this.escapeHtml(acc.name || e), 0, 2)}
+        <div class="space-y-3">
+          ${campo('accName', 'Nome', acc.name, 'text', 'Nome completo')}
+          ${campo('accEmail', 'Email (é também o login)', acc.email, 'email', 'nome@exemplo.pt')}
+          ${campo('accNif', 'NIF', acc.nif, 'text', 'Opcional')}
+          ${campo('accPhone', 'Telemóvel', acc.phone, 'text', 'Opcional')}
+          ${campo('accAddress', 'Morada', acc.address, 'text', 'Opcional')}
+        </div>
+        ${eu ? `
+          <div class="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900 mt-4">
+            Para <strong>mudar o email</strong> confirma a tua password atual. Os outros dados não precisam.
+          </div>
+          <div class="mt-3">
+            <label class="block text-xs font-semibold text-gray-700 mb-1">Password atual</label>
+            <div class="relative"><input id="accCurrentPwd" type="password" autocomplete="current-password" class="w-full px-3 py-2 pr-10 border border-gray-200 rounded-lg text-sm">${this.pwdEyeBtn('accCurrentPwd')}</div>
+          </div>
+        ` : `
+          <div class="mt-4 pt-4 border-t">
+            <label class="block text-xs font-semibold text-gray-700 mb-1">Nova password <span class="font-normal text-gray-400">(deixa vazio para manter)</span></label>
+            <div class="relative"><input id="accNewPwd" type="password" autocomplete="new-password" placeholder="Mínimo 4 caracteres" class="w-full px-3 py-2 pr-10 border border-gray-200 rounded-lg text-sm">${this.pwdEyeBtn('accNewPwd')}</div>
+          </div>
+        `}
+        <div id="accError" class="hidden text-sm text-red-600 font-semibold mt-3"></div>
+        <div class="flex gap-2 mt-4">
+          <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">Cancelar</button>
+          <button onclick="app.submitEditAccount()" class="flex-1 btn-admin text-white px-4 py-2 rounded-lg font-semibold">Guardar</button>
+        </div>
+      </div>
+    `);
+        },
+
+        async submitEditAccount() {
+          const alvo = this.editingAccount;
+          if (!alvo) return;
+          const eu = alvo.modo === 'self';
+          if (!eu && this.currentUser?.role !== 'admin') return;
+          const errorEl = document.getElementById('accError');
+          const fail = msg => { errorEl.textContent = msg; errorEl.classList.remove('hidden'); };
+          errorEl.classList.add('hidden');
+
+          const dados = {
+            name: (document.getElementById('accName').value || '').trim(),
+            nif: (document.getElementById('accNif').value || '').trim(),
+            phone: (document.getElementById('accPhone').value || '').trim(),
+            address: (document.getElementById('accAddress').value || '').trim()
+          };
+          const novoEmail = (document.getElementById('accEmail').value || '').trim().toLowerCase();
+          const novaPwd = eu ? '' : (document.getElementById('accNewPwd')?.value || '').trim();
+          const pwdAtual = eu ? (document.getElementById('accCurrentPwd')?.value || '') : '';
+
+          if (!dados.name) return fail('O nome não pode ficar vazio.');
+          if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(novoEmail)) return fail('Email inválido.');
+          const mudouEmail = novoEmail !== alvo.email;
+          if (mudouEmail && this.state.accounts[novoEmail]) return fail('Já existe uma conta com esse email.');
+          if (mudouEmail && eu && !pwdAtual) return fail('Para mudar o email tens de confirmar a password atual.');
+          if (!eu && novaPwd && novaPwd.length < 4) return fail('A password tem de ter pelo menos 4 caracteres.');
+
+          this.setModalContent(this.modalBusy('A guardar…', 'A atualizar a conta e as participações.'));
+          try {
+            // 1) Email primeiro: é o que arrasta login e participações.
+            if (mudouEmail) {
+              await this.changeAccountEmail(alvo.email, novoEmail, { asAdmin: !eu, password: pwdAtual });
+              delete this.state.accounts[alvo.email];
+              Object.values(this.state.categories).flat().forEach(pl => {
+                if ((pl.email || '').toLowerCase() === alvo.email) pl.email = novoEmail;
+                if ((pl.partnerEmail || '').toLowerCase() === alvo.email) pl.partnerEmail = novoEmail;
+              });
+              if (eu) this.currentUser.email = novoEmail;
+            }
+            const emailFinal = mudouEmail ? novoEmail : alvo.email;
+            // 2) Dados da conta e a cópia que vive nas participações.
+            await this.saveAccountFields(emailFinal, dados);
+            await this.propagateAccountToPlayers(emailFinal, dados);
+            // 3) Password (só o admin repõe sem saber a antiga).
+            if (!eu && novaPwd) await this.adminResetLogin(emailFinal, novaPwd);
+            if (eu) {
+              this.currentUser.name = dados.name;
+              // A sessão guarda o utilizador; sem isto, um refresh traria os dados antigos.
+              sessionStorage.setItem('emtpUser_v2', JSON.stringify(this.currentUser));
+              this.updateProfileUI();
+            }
+
+            this.editingAccount = null;
+            this.render();
+            this.renderVacanciesOverview();
+            this.setModalContent(`
+      <div class="p-6">
+        ${this.modalSteps('✅ Dados guardados', this.escapeHtml(dados.name), 1, 2)}
+        <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-sm text-emerald-900 mb-4">
+          ${mudouEmail ? `O email passou a ser <strong>${this.escapeHtml(emailFinal)}</strong> — é com ele que se entra a partir de agora.` : 'Os dados da conta foram atualizados.'}
+          ${!eu && novaPwd ? '<br>A password foi reposta.' : ''}
+        </div>
+        ${!eu && novaPwd ? `
+          <div class="bg-gray-50 border rounded-xl p-3 text-sm mb-4">
+            <div class="text-xs text-gray-500">Credenciais a entregar</div>
+            <div class="font-mono font-bold">${this.escapeHtml(emailFinal)}</div>
+            <div class="font-mono font-bold text-amber-700">${this.escapeHtml(novaPwd)}</div>
+          </div>` : ''}
+        <button onclick="app.closeGenericModal()" class="w-full btn-admin text-white px-4 py-2 rounded-lg font-semibold">Fechar</button>
+      </div>
+    `);
+          } catch (error) {
+            console.error('Erro:', error);
+            this.editingAccount = alvo;
+            this.setModalContent(this.modalErro('Não foi possível guardar',
+              error.message || String(error), 'Voltar a editar',
+              `app.openEditAccountModal('${alvo.email.replace(/'/g, "\\'")}', '${alvo.modo}')`));
+          }
+        },
+
         openChangePasswordModal() {
           this.openGenericModal(`
       <div class="p-6">
@@ -2548,7 +2759,11 @@
                     <div class="text-xs text-white/70">Vagas</div>
                     <div class="text-2xl font-bold">${vacancies}</div>
                     <div class="text-[10px] text-white/60">${players.length}/${capacity} inscritos</div>
-                    ${isAdmin ? `<button onclick="app.openTournamentDatesModal('${cat.id}')" class="mt-1 text-[10px] font-bold bg-white/20 hover:bg-white/30 rounded px-2 py-0.5">⚙️ Lotação</button>` : ''}
+                    ${isAdmin ? `
+                      <div class="flex flex-col gap-1 mt-1 items-end">
+                        <button onclick="app.openQuickInscriptionFor('${cat.id}')" class="text-[10px] font-bold bg-white/20 hover:bg-white/30 rounded px-2 py-0.5">➕ Inscrever</button>
+                        <button onclick="app.openTournamentDatesModal('${cat.id}')" class="text-[10px] font-bold bg-white/20 hover:bg-white/30 rounded px-2 py-0.5">⚙️ Lotação</button>
+                      </div>` : ''}
                   </div>
                 </div>
               </div>
@@ -5107,99 +5322,206 @@
       </div>`;
         },
 
-        openAddPlayerModal() {
-          const tenisCats = this.CATEGORIES.filter(c => c.sport === 'tenis');
-          const padelCats = this.CATEGORIES.filter(c => c.sport === 'padel');
+        // ============================================
+        // INSCRIÇÃO RÁPIDA (admin): modalidade, categoria e nomes
+        // ============================================
+        // Nas categorias de Padel joga-se a pares, nas de Ténis a solo — o tipo sai
+        // da modalidade, para o admin não ter de o escolher.
+        categoryIsDoubles(catId) {
+          const cat = this.CATEGORIES.find(c => c.id === catId);
+          return !!cat && cat.sport === 'padel';
+        },
+
+        // Se este atleta já tiver conta (mesmo nome) e ela não estiver presa a outra
+        // participação, reaproveita-se — é a mesma pessoa a voltar, e assim mantém o
+        // login e a password que já usava.
+        findReusableAccount(name, reservados) {
+          const alvo = this.normalizeSearch(name);
+          if (!alvo) return null;
+          const emUso = new Set((reservados || []).map(e => (e || '').toLowerCase()));
+          Object.values(this.state.categories).flat().forEach(pl => {
+            [pl.email, pl.partnerEmail].filter(Boolean).forEach(e => emUso.add(e.toLowerCase()));
+          });
+          return Object.values(this.state.accounts || {})
+            .find(a => this.normalizeSearch(a.name) === alvo && !emUso.has((a.email || '').toLowerCase())) || null;
+        },
+
+        // Decide o email/password de um atleta a partir do nome apenas.
+        resolveAthleteAccount(name, reservados) {
+          const existente = this.findReusableAccount(name, reservados);
+          if (existente) return { name, email: existente.email, password: null, nova: false };
+          return { name, email: this.generatePlayerEmail(name, reservados), password: this.generateTempPassword(), nova: true };
+        },
+
+        // Abre a inscrição rápida já posicionada numa categoria (atalho dos cartões).
+        openQuickInscriptionFor(catId) {
+          const cat = this.CATEGORIES.find(c => c.id === catId);
+          if (!cat) return;
+          this.quickCat = catId;
+          this.openQuickInscription(cat.sport);
+        },
+
+        // ---------- Passo 1: modalidade, categoria e nomes ----------
+        openQuickInscription(sport) {
+          if (this.currentUser?.role !== 'admin') return;
+          const modalidade = sport || 'tenis';
+          const cats = this.CATEGORIES.filter(c => c.sport === modalidade);
+          const escolhida = (this.quickCat && cats.some(c => c.id === this.quickCat)) ? this.quickCat : cats[0].id;
+          this.quickCat = escolhida;
+          const botaoModalidade = (id, label) => `
+        <button onclick="app.openQuickInscription('${id}')"
+          class="flex-1 px-4 py-3 rounded-xl border-2 font-bold text-sm ${modalidade === id ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-gray-200 hover:bg-gray-50 text-gray-600'}">${label}</button>`;
           this.openGenericModal(`
       <div class="p-6">
-        <div class="flex justify-between mb-4">
-          <h3 class="text-xl font-bold">Adicionar Utilizador</h3>
-          <button onclick="app.closeGenericModal()" class="text-gray-400 text-2xl leading-none">×</button>
+        ${this.modalSteps('➕ Inscrever atleta', 'Escolhe a modalidade e a categoria, e escreve os nomes.', 0, 2)}
+
+        <div class="text-xs font-bold text-gray-400 uppercase mb-2">1. Modalidade</div>
+        <div class="flex gap-2 mb-4">
+          ${botaoModalidade('tenis', '🎾 Ténis')}
+          ${botaoModalidade('padel', '🏆 Padel')}
         </div>
-        <div class="space-y-4">
-          <select id="newPlayerType" class="w-full px-3 py-2 border rounded-lg">
-            <option value="single">🎾 Singulares</option>
-            <option value="doubles">🎾🎾 Duplas</option>
-          </select>
-          <select id="newPlayerCat" class="w-full px-3 py-2 border rounded-lg">
-            <optgroup label="🎾 Ténis">
-              ${tenisCats.map(c => `<option value="${c.id}">${c.icon} ${c.name}</option>`).join('')}
-            </optgroup>
-            <optgroup label="🏆 Padel">
-              ${padelCats.map(c => `<option value="${c.id}">${c.icon} ${c.name}</option>`).join('')}
-            </optgroup>
-          </select>
-          <input id="newPlayerName" type="text" class="w-full px-3 py-2 border rounded-lg" placeholder="Nome">
-          <div>
-            <label class="block text-xs font-semibold text-gray-500 mb-1">Password inicial (o atleta pode alterar depois)</label>
-            <div class="relative"><input id="newPlayerPassword" type="password" class="w-full px-3 py-2 pr-10 border rounded-lg" value="emtp2026">${this.pwdEyeBtn('newPlayerPassword')}</div>
-          </div>
-          <div id="newPlayerError" class="hidden text-sm text-red-600 font-semibold"></div>
-          <div class="flex gap-2">
-            <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 rounded-lg font-semibold">Cancelar</button>
-            <button onclick="app.addPlayer()" class="flex-1 btn-admin text-white px-4 py-2 rounded-lg font-semibold">Adicionar</button>
-          </div>
+
+        <div class="text-xs font-bold text-gray-400 uppercase mb-2">2. Categoria</div>
+        <select id="quickCat" onchange="app.refreshQuickInscription()" class="w-full px-3 py-2 border border-gray-200 rounded-lg mb-4">
+          ${cats.map(c => `<option value="${c.id}" ${escolhida === c.id ? 'selected' : ''}>${c.icon} ${c.name}${c.desc ? ' — ' + c.desc : ''}</option>`).join('')}
+        </select>
+
+        <div class="text-xs font-bold text-gray-400 uppercase mb-2">3. Nomes</div>
+        <div id="quickNames"></div>
+        <div id="quickInfo"></div>
+        <div id="quickError" class="hidden text-sm text-red-600 font-semibold mb-3"></div>
+
+        <div class="flex gap-2 mt-4">
+          <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">Cancelar</button>
+          <button id="quickSubmit" onclick="app.submitQuickInscription()" class="flex-1 btn-inscription text-white px-4 py-2 rounded-lg font-semibold">Inscrever</button>
         </div>
       </div>
     `);
+          this.refreshQuickInscription();
         },
 
-        async addPlayer() {
-          const catId = document.getElementById('newPlayerCat').value;
-          const name = document.getElementById('newPlayerName').value.trim();
-          const type = document.getElementById('newPlayerType').value;
-          const password = document.getElementById('newPlayerPassword').value.trim();
-          const errorEl = document.getElementById('newPlayerError');
-          errorEl.classList.add('hidden');
-          if (!name) { alert('Introduz um nome'); return; }
-          if (password.length < 4) {
-            errorEl.textContent = 'A password deve ter pelo menos 4 caracteres';
-            errorEl.classList.remove('hidden');
-            return;
-          }
+        // Campos de nome e avisos, conforme a categoria escolhida.
+        refreshQuickInscription() {
+          const sel = document.getElementById('quickCat');
+          if (!sel) return;
+          const catId = sel.value;
+          this.quickCat = catId;
           const cat = this.CATEGORIES.find(c => c.id === catId);
-          const newId = `${catId}-${Date.now()}`;
-          const email = this.generatePlayerEmail(name);
-          const newPlayer = {
-            id: newId,
-            name,
-            type,
-            sport: cat.sport,
-            email,
-            phone: '',
-            partner: null,
-            registeredAt: new Date().toISOString()
-          };
+          const duplas = this.categoryIsDoubles(catId);
+          const t = this.getTournament(catId);
+          const inscritos = (this.state.categories[catId] || []).length;
+          const vagas = this.getVacancies(catId);
+
+          const campo = (id, rotulo, placeholder) => `
+        <div class="mb-3">
+          <label class="block text-xs font-semibold text-gray-700 mb-1">${rotulo}</label>
+          <input id="${id}" type="text" autocomplete="off" placeholder="${placeholder}"
+            class="w-full px-3 py-2 border border-gray-200 rounded-lg">
+        </div>`;
+          document.getElementById('quickNames').innerHTML = duplas
+            ? campo('quickName1', 'Jogador 1', 'Nome completo') + campo('quickName2', 'Jogador 2', 'Nome completo')
+            : campo('quickName1', 'Nome do atleta', 'Nome completo');
+
+          const info = document.getElementById('quickInfo');
+          const btn = document.getElementById('quickSubmit');
+          if (t.started) {
+            info.innerHTML = `
+        <div class="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-800">
+          O torneio de <strong>${this.escapeHtml(cat.name)}</strong> já foi sorteado, por isso as inscrições estão fechadas.
+          Quem entrasse agora ficaria sem jogos. Para inscrever mais alguém, reabre o torneio em <strong>Calendário</strong>.
+        </div>`;
+            btn.disabled = true;
+            btn.classList.add('opacity-40', 'cursor-not-allowed');
+          } else {
+            info.innerHTML = `
+        <div class="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900">
+          ${duplas ? 'Categoria de <strong>duplas</strong> — são precisos os dois nomes.' : 'Categoria de <strong>singulares</strong>.'}
+          ${inscritos}/${this.getCapacity(catId)} inscritos${vagas ? ` • ${vagas} vaga(s)` : ' • <strong>sem vagas</strong> (podes inscrever à mesma)'}.
+          O email e a password de acesso são gerados automaticamente e mostrados no fim.
+        </div>`;
+            btn.disabled = false;
+            btn.classList.remove('opacity-40', 'cursor-not-allowed');
+          }
+        },
+
+        // ---------- Passo 2: inscrever ----------
+        async submitQuickInscription() {
+          if (this.currentUser?.role !== 'admin') return;
+          const catId = document.getElementById('quickCat').value;
+          const cat = this.CATEGORIES.find(c => c.id === catId);
+          const duplas = this.categoryIsDoubles(catId);
+          const errorEl = document.getElementById('quickError');
+          const fail = msg => { errorEl.textContent = msg; errorEl.classList.remove('hidden'); };
+          errorEl.classList.add('hidden');
+
+          const n1 = (document.getElementById('quickName1').value || '').trim();
+          const n2 = duplas ? (document.getElementById('quickName2').value || '').trim() : '';
+          if (!n1) return fail(duplas ? 'Escreve o nome do jogador 1.' : 'Escreve o nome do atleta.');
+          if (duplas && !n2) return fail('Nas duplas são precisos os dois nomes.');
+          if (duplas && this.normalizeSearch(n1) === this.normalizeSearch(n2)) return fail('Os dois jogadores não podem ser a mesma pessoa.');
+          if (this.getTournament(catId).started) return fail('O torneio desta categoria já foi sorteado. Reabre-o em Calendário para inscrever mais atletas.');
+          // Já inscrito nesta categoria?
+          const jaLa = (this.state.categories[catId] || []).some(pl =>
+            this.normalizeSearch(pl.name) === this.normalizeSearch(duplas ? `${n1} & ${n2}` : n1));
+          if (jaLa) return fail(`${duplas ? 'Esta dupla' : 'Este atleta'} já está inscrito em ${cat.name}.`);
+
+          const contas = [this.resolveAthleteAccount(n1)];
+          if (duplas) contas.push(this.resolveAthleteAccount(n2, [contas[0].email]));
+
+          this.setModalContent(this.modalBusy('A inscrever…', 'A criar a inscrição e os acessos.'));
           try {
-            await this.addPlayerToSupabase(newPlayer, catId);
-            await this.createAccount(email, { name, nif: '', address: '', phone: '' }, password);
-            const players = this.state.categories[catId] || [];
-            players.push(newPlayer);
-            this.state.categories[catId] = players;
-            this.state.matches[catId] = this.generateRoundRobin(players);
+            const novoPlayer = {
+              id: `${catId}-${Date.now()}`,
+              name: duplas ? `${n1} & ${n2}` : n1,
+              type: duplas ? 'doubles' : 'single',
+              sport: cat.sport,
+              email: contas[0].email,
+              phone: '',
+              nif: null,
+              address: null,
+              partner: duplas ? { name: n2 } : null,
+              partnerEmail: duplas ? contas[1].email : null,
+              registeredAt: new Date().toISOString()
+            };
+            await this.addPlayerToSupabase(novoPlayer, catId);
+            for (const c of contas) {
+              if (c.nova) await this.createAccount(c.email, { name: c.name, nif: '', address: '', phone: '' }, c.password);
+            }
+            this.state.categories[catId] = [...(this.state.categories[catId] || []), novoPlayer];
             this.render();
             this.renderVacanciesOverview();
-            this.showPlayerCredentials(newPlayer, password);
+            this.showQuickInscriptionResult(catId, novoPlayer, contas);
           } catch (error) {
             console.error('Erro:', error);
-            errorEl.textContent = 'Erro ao adicionar atleta: ' + (error.message || error);
-            errorEl.classList.remove('hidden');
+            this.setModalContent(this.modalErro('A inscrição não ficou concluída',
+              error.message || String(error), 'Tentar de novo', `app.openQuickInscription('${cat.sport}')`));
           }
         },
 
-        // Mostra ao admin o email e password gerados, para partilhar com o atleta.
-        showPlayerCredentials(player, password) {
-          this.openGenericModal(`
-      <div class="p-6 text-center">
-        <div class="text-5xl mb-3">✅</div>
-        <h3 class="text-xl font-bold mb-1">Atleta adicionado!</h3>
-        <p class="text-sm text-gray-500 mb-4">Partilha estas credenciais com ${player.name}</p>
-        <div class="bg-gray-50 border rounded-xl p-4 text-left space-y-2 mb-4">
-          <div><span class="text-xs text-gray-500 block">Email</span><span class="font-mono font-bold">${player.email}</span></div>
-          <div><span class="text-xs text-gray-500 block">Password</span><span class="font-mono font-bold">${password}</span></div>
+        showQuickInscriptionResult(catId, player, contas) {
+          const cat = this.CATEGORIES.find(c => c.id === catId);
+          const cartao = c => `
+        <div class="border rounded-xl p-3 mb-2">
+          <div class="font-bold text-sm mb-1">${this.escapeHtml(c.name)}</div>
+          <div class="text-xs"><span class="text-gray-500">Email</span> <span class="font-mono font-bold">${this.escapeHtml(c.email)}</span></div>
+          ${c.nova
+            ? `<div class="text-xs"><span class="text-gray-500">Password</span> <span class="font-mono font-bold text-amber-700">${this.escapeHtml(c.password)}</span></div>`
+            : `<div class="text-xs text-gray-500">Já tinha conta — mantém a password que usava.</div>`}
+        </div>`;
+          this.setModalContent(`
+      <div class="p-6">
+        ${this.modalSteps('✅ Atleta inscrito', `${cat.icon} <strong>${this.escapeHtml(cat.name)}</strong>`, 1, 2)}
+        <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-sm text-emerald-900 mb-4">
+          <strong>${this.escapeHtml(player.name)}</strong> ficou inscrito em ${this.escapeHtml(cat.name)}.
+          A categoria tem agora ${(this.state.categories[catId] || []).length} inscrito(s).
         </div>
-        <p class="text-xs text-gray-400 mb-4">O atleta pode alterar a password em Perfil depois de entrar.</p>
-        <button onclick="app.closeGenericModal()" class="w-full btn-admin text-white px-4 py-2 rounded-lg font-semibold">Fechar</button>
+        <div class="text-xs font-bold text-gray-400 uppercase mb-2">Acessos a entregar</div>
+        ${contas.map(cartao).join('')}
+        <p class="text-xs text-gray-400 mb-4">O atleta altera a password em Perfil depois de entrar.</p>
+        <div class="flex gap-2">
+          <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">Fechar</button>
+          <button onclick="app.openQuickInscription('${cat.sport}')" class="flex-1 btn-inscription text-white px-4 py-2 rounded-lg font-semibold">+ Inscrever outro</button>
+        </div>
       </div>
     `);
         },

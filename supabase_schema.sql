@@ -495,6 +495,81 @@ grant execute on function login_player_v2(text, text) to anon, authenticated;
 grant execute on function change_login_password(text, text, text) to anon, authenticated;
 grant execute on function admin_reset_login(text, text) to anon, authenticated;
 
+-- ---------- ALTERAR O EMAIL DE UMA CONTA ----------
+-- O email é a chave da conta (accounts), do login (player_logins) e está copiado
+-- nas participações (players.email e players.partner_email). Mudá-lo tem de ser
+-- atómico, senão a pessoa fica sem login ou com participações órfãs — por isso
+-- vive aqui numa função e não em vários pedidos do browser.
+-- Esta função NÃO é exposta ao anon: só as duas de cima (admin / próprio) a chamam.
+create or replace function change_account_email(p_old_email text, p_new_email text)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_old text := lower(trim(p_old_email));
+  v_new text := lower(trim(p_new_email));
+begin
+  if v_new is null or v_new = '' or v_new !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then
+    raise exception 'Email inválido.';
+  end if;
+  if v_old = v_new then
+    return;
+  end if;
+  if exists (select 1 from accounts where email = v_new)
+     or exists (select 1 from player_logins where email = v_new) then
+    raise exception 'Já existe uma conta com o email %.', v_new;
+  end if;
+  if not exists (select 1 from accounts where email = v_old)
+     and not exists (select 1 from player_logins where email = v_old) then
+    raise exception 'Não existe nenhuma conta com o email %.', v_old;
+  end if;
+
+  update player_logins set email = v_new, updated_at = now() where email = v_old;
+  update accounts     set email = v_new where email = v_old;
+  update players      set email = v_new where lower(email) = v_old;
+  update players      set partner_email = v_new where lower(partner_email) = v_old;
+end;
+$$;
+
+revoke all on function change_account_email(text, text) from public, anon, authenticated;
+
+-- O admin altera o email de qualquer conta (precisa de sessão Supabase como admin).
+create or replace function admin_change_account_email(p_old_email text, p_new_email text)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if not exists (select 1 from profiles where id = auth.uid() and role = 'admin') then
+    raise exception 'Apenas o administrador pode alterar emails de contas.';
+  end if;
+  perform change_account_email(p_old_email, p_new_email);
+end;
+$$;
+
+-- O próprio utilizador altera o seu email, confirmando a password atual.
+create or replace function change_own_account_email(p_email text, p_password text, p_new_email text)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare v_hash text;
+begin
+  select password_hash into v_hash from player_logins where email = lower(trim(p_email));
+  if v_hash is null or v_hash <> crypt(p_password, v_hash) then
+    raise exception 'Password incorreta.';
+  end if;
+  perform change_account_email(p_email, p_new_email);
+end;
+$$;
+
+grant execute on function admin_change_account_email(text, text) to authenticated;
+grant execute on function change_own_account_email(text, text, text) to anon, authenticated;
+
 -- Migração: importa as credenciais antigas (player_credentials, por player_id)
 -- para o novo modelo por email, usando o email de cada jogador. Idempotente.
 insert into player_logins (email, password_hash, player_id)
