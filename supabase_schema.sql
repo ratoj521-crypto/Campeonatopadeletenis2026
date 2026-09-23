@@ -65,9 +65,15 @@ alter table matches add column if not exists leg int not null default 1;        
 alter table matches add column if not exists round_idx int;                        -- ronda do quadro final (0 = primeira)
 alter table matches add column if not exists label text;                           -- 'Meia-final 1', 'Finalíssima', '3º/4º lugar', ...
 
+-- Marcação do jogo (dia/hora/local combinados entre os adversários ou definidos pelo admin).
+-- Nulo = ainda por marcar (vale a janela de datas da jornada).
+alter table matches add column if not exists scheduled_date date;
+alter table matches add column if not exists scheduled_time text;                  -- 'HH:MM'
+alter table matches add column if not exists scheduled_location text;
+
 create table if not exists messages (
   id text primary key,
-  channel_id text not null,          -- 'global' ou id de categoria
+  channel_id text not null,          -- 'global', id de categoria, 'dm:<email>' ou 'match:<id do jogo>'
   author_id text,
   author_name text,
   author_role text,
@@ -77,7 +83,7 @@ create table if not exists messages (
   suggested_date text,
   suggested_time text,
   suggested_location text,
-  reschedule_response text,
+  reschedule_response text,          -- null (pendente) | 'accepted' | 'rejected' | 'countered' | 'superseded'
   reschedule_responder text
 );
 

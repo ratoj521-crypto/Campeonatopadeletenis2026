@@ -645,13 +645,20 @@
           const filters = [];
           const hit = r => filters.every(f => f.op === 'eq'
             ? String(r[f.col]) === String(f.val)
-            : String(r[f.col]) !== String(f.val));
+            : f.op === 'like'
+              ? f.re.test(String(r[f.col] ?? ''))
+              : String(r[f.col]) !== String(f.val));
           const api = {
             _select: false, _single: false, _order: null, _action: null,
             select() { api._select = true; return api; },
             order(col, opts) { api._order = { col, asc: !opts || opts.ascending !== false }; return api; },
             eq(col, val) { filters.push({ col, op: 'eq', val }); return api; },
             neq(col, val) { filters.push({ col, op: 'neq', val }); return api; },
+            like(col, pattern) {
+              const re = new RegExp('^' + String(pattern).split('%').map(x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/_/g, '.')).join('.*') + '$');
+              filters.push({ col, op: 'like', re });
+              return api;
+            },
             single() { api._single = true; return api; },
             insert(vals) {
               api._action = () => {
@@ -676,7 +683,7 @@
             update(vals) {
               api._action = () => {
                 const changed = rows().filter(hit);
-                changed.forEach(r => Object.assign(r, vals));
+                changed.forEach(r => { Object.assign(r, vals); notify(table, 'UPDATE', { ...r }); });
                 return changed;
               };
               return api;
@@ -707,7 +714,7 @@
           return api;
         }
 
-        // Realtime simulado. Só se notificam INSERTs em `messages`, que é o caso em
+        // Realtime simulado. Só se notificam INSERTs/UPDATEs em `messages`, que é o caso em
         // que a app conta com o realtime para se atualizar (sendMessage grava e espera
         // que o evento traga a mensagem de volta). Para `players`/`matches` a app já
         // atualiza o estado local diretamente, e notificar aí provocaria recargas a
@@ -949,7 +956,10 @@
                 groupIdx: (m.group_idx === null || m.group_idx === undefined) ? null : m.group_idx,
                 leg: m.leg || 1,
                 roundIdx: (m.round_idx === null || m.round_idx === undefined) ? null : m.round_idx,
-                label: m.label || null
+                label: m.label || null,
+                scheduledDate: m.scheduled_date || null,
+                scheduledTime: m.scheduled_time || null,
+                scheduledLocation: m.scheduled_location || null
               });
             }
           });
@@ -967,20 +977,7 @@
           (messages || []).forEach(m => {
             const channel = m.channel_id;
             if (!this.state.messages[channel]) this.state.messages[channel] = [];
-            this.state.messages[channel].push({
-              id: m.id,
-              authorId: m.author_id,
-              authorName: m.author_name,
-              authorRole: m.author_role,
-              text: m.text,
-              type: m.type,
-              timestamp: m.timestamp,
-              suggestedDate: m.suggested_date,
-              suggestedTime: m.suggested_time,
-              suggestedLocation: m.suggested_location,
-              rescheduleResponse: m.reschedule_response,
-              rescheduleResponder: m.reschedule_responder
-            });
+            this.state.messages[channel].push(this.messageFromRow(m));
           });
 
           // Carregar inscrições
@@ -1046,28 +1043,19 @@
               const msg = payload.new;
               const channel = msg.channel_id;
               if (!this.state.messages[channel]) this.state.messages[channel] = [];
-              this.state.messages[channel].push({
-                id: msg.id,
-                authorId: msg.author_id,
-                authorName: msg.author_name,
-                authorRole: msg.author_role,
-                text: msg.text,
-                type: msg.type,
-                timestamp: msg.timestamp,
-                suggestedDate: msg.suggested_date,
-                suggestedTime: msg.suggested_time,
-                suggestedLocation: msg.suggested_location,
-                rescheduleResponse: msg.reschedule_response,
-                rescheduleResponder: msg.reschedule_responder
-              });
-              if (this.currentTab === 'chat' && this.currentChatChannel === channel) {
-                this.renderChatMessages();
-                setTimeout(() => {
-                  const container = document.getElementById('chatMessages');
-                  if (container) container.scrollTop = container.scrollHeight;
-                }, 50);
-              }
-              this.updateChatBadge();
+              if (this.state.messages[channel].some(x => x.id === msg.id)) return;
+              this.state.messages[channel].push(this.messageFromRow(msg));
+              this.onMessagesChanged(channel, true);
+            })
+            // Respostas às propostas de marcação (aceitar/rejeitar) chegam como UPDATE.
+            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, payload => {
+              const msg = payload.new;
+              const channel = msg.channel_id;
+              const list = this.state.messages[channel] || [];
+              const idx = list.findIndex(x => x.id === msg.id);
+              if (idx === -1) return;
+              list[idx] = this.messageFromRow(msg);
+              this.onMessagesChanged(channel, false);
             })
             .subscribe();
 
@@ -1093,9 +1081,45 @@
           this.realtimeSubscriptions = [messagesSub, playersSub, matchesSub];
         },
 
+        messageFromRow(m) {
+          return {
+            id: m.id,
+            authorId: m.author_id,
+            authorName: m.author_name,
+            authorRole: m.author_role,
+            text: m.text,
+            type: m.type,
+            timestamp: m.timestamp,
+            suggestedDate: m.suggested_date,
+            suggestedTime: m.suggested_time,
+            suggestedLocation: m.suggested_location,
+            rescheduleResponse: m.reschedule_response,
+            rescheduleResponder: m.reschedule_responder
+          };
+        },
+
+        // Atualiza o ecrã depois de chegar/mudar uma mensagem por realtime.
+        onMessagesChanged(channel, scrollToEnd) {
+          if (!this.currentUser) return;
+          if (this.currentTab === 'chat' && this.currentChatChannel === channel) {
+            this.markAsRead(channel);
+            this.renderChatMessages();
+            if (scrollToEnd) {
+              setTimeout(() => {
+                const container = document.getElementById('chatMessages');
+                if (container) container.scrollTop = container.scrollHeight;
+              }, 50);
+            }
+          } else if (['calendario', 'resultados'].includes(this.currentTab) && channel.startsWith('match:') && document.getElementById('modal').classList.contains('hidden')) {
+            // Calendário e Resultados mostram se há um pedido de marcação pendente.
+            this.render();
+          }
+          this.updateChatBadge();
+        },
+
         updateChatBadge() {
           const chatTab = document.querySelector('[data-tab="chat"]');
-          if (chatTab && this.currentTab !== 'chat') {
+          if (chatTab && this.currentUser) {
             const unread = this.getTotalUnread();
             chatTab.innerHTML = `💬 Chat ${unread > 0 ? `<span class="unread-badge ml-1">${unread > 9 ? '9+' : unread}</span>` : ''}`;
           }
@@ -1302,7 +1326,7 @@
           if (error) throw error;
         },
 
-        async updateMessageResponse(channelId, messageId, response) {
+        async updateMessageResponse(messageId, response) {
           const { error } = await sb
             .from('messages')
             .update({
@@ -1545,7 +1569,7 @@
             regulamento: () => this.renderRegulamento()
           };
           content.innerHTML = (renderers[this.currentTab] || (() => '<div>Em construção</div>'))();
-          if (this.currentTab !== 'chat') this.updateChatBadge();
+          this.updateChatBadge();
         },
 
         // ============================================
@@ -2895,6 +2919,303 @@
           return windows;
         },
 
+        // ---- Marcação dos jogos (dia/hora combinados entre adversários) ----
+        // Ids de participação do utilizador atual em todas as categorias (numa dupla
+        // os dois jogadores partilham o mesmo id; no Padel pode haver várias categorias).
+        myPlayerIds() {
+          const ids = new Set();
+          if (!this.currentUser || this.currentUser.role === 'admin') return ids;
+          if (this.currentUser.playerId) ids.add(this.currentUser.playerId);
+          const e = (this.currentUser.email || '').toLowerCase();
+          Object.values(this.state.categories).forEach(players => (players || []).forEach(p => {
+            if (e && ((p.email || '').toLowerCase() === e || (p.partnerEmail || '').toLowerCase() === e)) ids.add(p.id);
+          }));
+          return ids;
+        },
+        // O meu id neste jogo (p1 ou p2), ou null se o jogo não é meu.
+        myIdInMatch(m) {
+          const ids = this.myPlayerIds();
+          return ids.has(m.p1) ? m.p1 : (ids.has(m.p2) ? m.p2 : null);
+        },
+        findMatch(matchId) {
+          for (const [catId, matches] of Object.entries(this.state.matches)) {
+            const match = (matches || []).find(m => m.id === matchId);
+            if (match) return { catId, match };
+          }
+          return null;
+        },
+        matchChannelId(matchId) { return `match:${matchId}`; },
+        matchIdFromChannel(channelId) { return (channelId || '').startsWith('match:') ? channelId.slice(6) : null; },
+        playerName(catId, playerId) {
+          return (this.state.categories[catId] || []).find(p => p.id === playerId)?.name || '—';
+        },
+        // Última proposta de marcação ainda sem resposta, para este jogo.
+        pendingProposal(matchId) {
+          const msgs = this.state.messages[this.matchChannelId(matchId)] || [];
+          for (let i = msgs.length - 1; i >= 0; i--) {
+            if (msgs[i].type === 'reschedule' && !msgs[i].rescheduleResponse) return msgs[i];
+          }
+          return null;
+        },
+        // Datas novas vêm em ISO (YYYY-MM-DD); propostas antigas já vinham formatadas.
+        formatScheduleDate(str) {
+          if (!str) return '';
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+          return this._d(str).toLocaleDateString('pt-PT', { weekday: 'short', day: '2-digit', month: 'short', timeZone: 'UTC' });
+        },
+        scheduleText(date, time, location) {
+          if (!date) return '';
+          return [this.formatScheduleDate(date), time || '', location || ''].filter(Boolean).join(' • ');
+        },
+        // Prazo para o atleta reportar o resultado: fim da jornada ou, se o jogo foi
+        // marcado para depois disso, o dia marcado.
+        isMatchDeadlinePast(catId, m) {
+          if (!this.isJornadaPast(catId, m.jornada)) return false;
+          return !(m.scheduledDate && this.todayStr() <= m.scheduledDate);
+        },
+
+        // Uma linha de jogo no calendário da jornada, com a marcação e as ações.
+        calendarMatchRow(catId, m, isAdmin) {
+          const p1 = this.playerName(catId, m.p1), p2 = this.playerName(catId, m.p2);
+          const mine = this.myIdInMatch(m);
+          const completed = this.isMatchComplete(m);
+          const pending = this.pendingProposal(m.id);
+          const quando = m.scheduledDate
+            ? `<span class="text-emerald-700 font-semibold">📅 ${this.escapeHtml(this.scheduleText(m.scheduledDate, m.scheduledTime, m.scheduledLocation))}</span>`
+            : '<span class="text-gray-400">Por marcar</span>';
+          const pendente = pending && !completed
+            ? `<div class="text-[11px] text-amber-700 mt-1">⏳ Proposta: ${this.escapeHtml(this.scheduleText(pending.suggestedDate, pending.suggestedTime, pending.suggestedLocation) || 'a combinar')} — ${pending.authorId === mine ? 'aguarda o adversário' : (mine ? '<strong>aguarda a tua resposta</strong>' : 'por responder')}</div>`
+            : '';
+          const botoes = [];
+          if (!completed && mine) {
+            botoes.push(`<button onclick="app.openScheduleModal('${m.id}')" class="px-2.5 py-1 bg-amber-100 hover:bg-amber-200 text-amber-800 rounded-lg text-[11px] font-semibold">📅 Marcação</button>`);
+          }
+          if (!completed && isAdmin) {
+            botoes.push(`<button onclick="app.openAdminScheduleModal('${m.id}')" class="px-2.5 py-1 btn-admin text-white rounded-lg text-[11px] font-semibold">🗓️ Alterar data</button>`);
+          }
+          if (mine || isAdmin) {
+            botoes.push(`<button onclick="app.openMatchChat('${m.id}')" class="px-2.5 py-1 bg-indigo-100 hover:bg-indigo-200 text-indigo-800 rounded-lg text-[11px] font-semibold">💬 Chat</button>`);
+          }
+          return `
+            <div class="py-2.5 ${mine ? 'bg-emerald-50/60 -mx-2 px-2 rounded-lg' : ''}">
+              <div class="text-sm font-semibold truncate">${this.escapeHtml(p1)} <span class="text-gray-400 font-normal">vs</span> ${this.escapeHtml(p2)} ${mine ? '<span class="text-[10px] text-emerald-600">(tu)</span>' : ''}</div>
+              <div class="text-xs mt-0.5">${completed ? '<span class="text-gray-500">✅ Jogo realizado</span>' : quando}</div>
+              ${pendente}
+              ${botoes.length ? `<div class="flex gap-1.5 flex-wrap mt-1.5">${botoes.join('')}</div>` : ''}
+            </div>`;
+        },
+
+        // Abre o chat privado do jogo (os dois adversários; o admin também vê).
+        openMatchChat(matchId) {
+          this.closeGenericModal();
+          this.currentChatChannel = this.matchChannelId(matchId);
+          this.markAsRead(this.currentChatChannel);
+          this.switchTab('chat');
+          setTimeout(() => {
+            const container = document.getElementById('chatMessages');
+            if (container) container.scrollTop = container.scrollHeight;
+          }, 100);
+        },
+
+        // Atleta propõe dia/hora ao adversário. counterTo = proposta do adversário a que responde.
+        openScheduleModal(matchId, counterTo) {
+          const found = this.findMatch(matchId);
+          if (!found) return;
+          const { catId, match } = found;
+          const mine = this.myIdInMatch(match);
+          if (!mine) { alert('Só podes marcar os teus jogos.'); return; }
+          if (this.isMatchComplete(match)) { alert('Este jogo já foi realizado.'); return; }
+          const cat = this.CATEGORIES.find(c => c.id === catId);
+          const opp = match.p1 === mine ? match.p2 : match.p1;
+          const t = this.getTournament(catId);
+          const w = this.computeJornadaWindows(t.startDate, t.endDate, this.jornadasForCategory(catId))[match.jornada - 1];
+          const base = counterTo ? (this.state.messages[this.matchChannelId(matchId)] || []).find(x => x.id === counterTo) : null;
+          const pre = {
+            date: (base && /^\d{4}-/.test(base.suggestedDate || '') ? base.suggestedDate : null) || match.scheduledDate || '',
+            time: base?.suggestedTime || match.scheduledTime || '',
+            location: base?.suggestedLocation || match.scheduledLocation || ''
+          };
+          this.openGenericModal(`
+      <div class="p-6">
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 bg-amber-500 rounded-xl flex items-center justify-center text-white text-lg">📅</div>
+            <div>
+              <h3 class="text-xl font-bold text-gray-900">${counterTo ? 'Propor nova data' : 'Marcação'}</h3>
+              <p class="text-xs text-gray-500">${cat.icon} ${cat.name} • Jornada ${match.jornada}</p>
+            </div>
+          </div>
+          <button onclick="app.closeGenericModal()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+        </div>
+        <div class="bg-gray-50 border rounded-xl p-3 mb-4 text-sm">
+          <div class="font-semibold">${this.escapeHtml(this.playerName(catId, match.p1))} vs ${this.escapeHtml(this.playerName(catId, match.p2))}</div>
+          <div class="text-xs text-gray-500 mt-1">Atual: ${match.scheduledDate ? this.escapeHtml(this.scheduleText(match.scheduledDate, match.scheduledTime, match.scheduledLocation)) : 'por marcar'}${w ? ` • Jornada prevista de ${this.formatDatePt(w.startDate)} a ${this.formatDatePt(w.endDate)}` : ''}</div>
+        </div>
+        <div class="space-y-3">
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-semibold text-gray-600 mb-1">Dia *</label>
+              <input id="schedDate" type="date" value="${pre.date}" min="${this.todayStr()}" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-gray-600 mb-1">Hora *</label>
+              <input id="schedTime" type="time" value="${pre.time}" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+            </div>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-600 mb-1">Local (opcional)</label>
+            <input id="schedLocation" type="text" value="${this.escapeHtml(pre.location)}" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" placeholder="Ex: Court 2 - Clube">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-600 mb-1">Mensagem para ${this.escapeHtml(this.playerName(catId, opp))} (opcional)</label>
+            <textarea id="schedText" rows="2" class="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-amber-400 outline-none text-sm" placeholder="Ex: Dá-te jeito jogarmos neste dia?"></textarea>
+          </div>
+          <p class="text-xs text-gray-500">O adversário recebe a proposta no chat do jogo e pode aceitar, rejeitar ou propor outra data. Podes marcar para depois do fim da jornada.</p>
+          <div id="schedError" class="hidden text-sm text-red-600 font-semibold"></div>
+        </div>
+        <div class="flex gap-2 pt-4">
+          <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">Cancelar</button>
+          <button onclick="app.submitSchedule('${matchId}', ${counterTo ? `'${counterTo}'` : 'null'})" class="flex-1 bg-gradient-to-r from-amber-500 to-orange-600 text-white px-4 py-2 rounded-lg font-semibold">📅 Enviar proposta</button>
+        </div>
+      </div>
+    `);
+        },
+
+        // Marca as propostas ainda pendentes deste jogo com um estado (substituída, contraproposta).
+        async closePendingProposals(matchId, response, exceptId) {
+          const msgs = (this.state.messages[this.matchChannelId(matchId)] || [])
+            .filter(x => x.type === 'reschedule' && !x.rescheduleResponse && x.id !== exceptId);
+          for (const x of msgs) {
+            await this.updateMessageResponse(x.id, response);
+            x.rescheduleResponse = response;
+            x.rescheduleResponder = this.currentUser.name;
+          }
+        },
+
+        async submitSchedule(matchId, counterTo) {
+          const found = this.findMatch(matchId);
+          if (!found) return;
+          const { match } = found;
+          const mine = this.myIdInMatch(match);
+          const date = document.getElementById('schedDate').value;
+          const time = document.getElementById('schedTime').value;
+          const location = document.getElementById('schedLocation').value.trim();
+          const note = document.getElementById('schedText').value.trim();
+          const errorEl = document.getElementById('schedError');
+          const fail = msg => { errorEl.textContent = msg; errorEl.classList.remove('hidden'); };
+          if (!mine) return fail('Só podes marcar os teus jogos.');
+          if (!date || !time) return fail('Indica o dia e a hora.');
+          if (date < this.todayStr()) return fail('O dia não pode ser no passado.');
+          const channel = this.matchChannelId(matchId);
+          const quando = this.scheduleText(date, time, location);
+          try {
+            if (counterTo) {
+              await this.updateMessageResponse(counterTo, 'countered');
+              const orig = (this.state.messages[channel] || []).find(x => x.id === counterTo);
+              if (orig) { orig.rescheduleResponse = 'countered'; orig.rescheduleResponder = this.currentUser.name; }
+            }
+            // Uma proposta nova substitui as que ainda estavam por responder.
+            await this.closePendingProposals(matchId, 'superseded');
+            await this.sendMessage(channel, note || `Proposta de marcação: ${quando}`, 'reschedule', {
+              authorId: mine, suggestedDate: date, suggestedTime: time, suggestedLocation: location
+            });
+            this.openMatchChat(matchId);
+          } catch (error) {
+            console.error('Erro:', error);
+            fail('Erro ao enviar a proposta: ' + (error.message || error));
+          }
+        },
+
+        // Grava a marcação no jogo (só as colunas da marcação, para não tocar no resultado).
+        async saveMatchSchedule(match, date, time, location) {
+          const { data, error } = await sb.from('matches').update({
+            scheduled_date: date || null,
+            scheduled_time: date ? (time || null) : null,
+            scheduled_location: date ? (location || null) : null,
+            updated_at: new Date().toISOString()
+          }).eq('id', match.id).select();
+          if (error) throw new Error((error.message || error) + ' — confirma que correste o supabase_schema.sql atualizado (colunas scheduled_*).');
+          if (!data || data.length === 0) throw new Error('A marcação não foi guardada (permissões da base de dados).');
+          match.scheduledDate = date || null;
+          match.scheduledTime = date ? (time || null) : null;
+          match.scheduledLocation = date ? (location || null) : null;
+        },
+
+        // O admin define (ou remove) diretamente o dia/hora de um jogo; os jogadores são avisados no chat do jogo.
+        openAdminScheduleModal(matchId) {
+          if (this.currentUser.role !== 'admin') return;
+          const found = this.findMatch(matchId);
+          if (!found) return;
+          const { catId, match } = found;
+          const cat = this.CATEGORIES.find(c => c.id === catId);
+          const pending = this.pendingProposal(matchId);
+          this.openGenericModal(`
+      <div class="p-6">
+        <div class="flex justify-between mb-4">
+          <div>
+            <h3 class="text-xl font-bold">🗓️ Alterar data do jogo</h3>
+            <p class="text-xs text-gray-500">${cat.icon} ${cat.name} • Jornada ${match.jornada}</p>
+          </div>
+          <button onclick="app.closeGenericModal()" class="text-gray-400 text-2xl leading-none">×</button>
+        </div>
+        <div class="bg-gray-50 border rounded-xl p-3 mb-4 text-sm">
+          <div class="font-semibold">${this.escapeHtml(this.playerName(catId, match.p1))} vs ${this.escapeHtml(this.playerName(catId, match.p2))}</div>
+          ${pending ? `<div class="text-xs text-amber-700 mt-1">⏳ Há uma proposta pendente dos jogadores (${this.escapeHtml(this.scheduleText(pending.suggestedDate, pending.suggestedTime, pending.suggestedLocation) || 'a combinar')}). Ao guardar, fica sem efeito.</div>` : ''}
+        </div>
+        <div class="space-y-3">
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-semibold text-gray-600 mb-1">Dia</label>
+              <input id="admSchedDate" type="date" value="${match.scheduledDate || ''}" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-gray-600 mb-1">Hora</label>
+              <input id="admSchedTime" type="time" value="${match.scheduledTime || ''}" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+            </div>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-600 mb-1">Local (opcional)</label>
+            <input id="admSchedLocation" type="text" value="${this.escapeHtml(match.scheduledLocation || '')}" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+          </div>
+          <p class="text-xs text-gray-500">Deixa o dia vazio para remover a marcação. Os dois jogadores recebem a notificação no chat do jogo.</p>
+          <div id="admSchedError" class="hidden text-sm text-red-600 font-semibold"></div>
+        </div>
+        <div class="flex gap-2 pt-4">
+          <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">Cancelar</button>
+          <button onclick="app.submitAdminSchedule('${matchId}')" class="flex-1 btn-admin text-white px-4 py-2 rounded-lg font-semibold">💾 Guardar</button>
+        </div>
+      </div>
+    `);
+        },
+
+        async submitAdminSchedule(matchId) {
+          const found = this.findMatch(matchId);
+          if (!found || this.currentUser.role !== 'admin') return;
+          const { catId, match } = found;
+          const date = document.getElementById('admSchedDate').value;
+          const time = document.getElementById('admSchedTime').value;
+          const location = document.getElementById('admSchedLocation').value.trim();
+          const errorEl = document.getElementById('admSchedError');
+          const fail = msg => { errorEl.textContent = msg; errorEl.classList.remove('hidden'); };
+          if (date && !time) return fail('Indica também a hora.');
+          try {
+            await this.saveMatchSchedule(match, date, time, location);
+            await this.closePendingProposals(matchId, 'superseded');
+            const jogo = `${this.playerName(catId, match.p1)} vs ${this.playerName(catId, match.p2)}`;
+            const texto = date
+              ? `🗓️ O admin marcou o jogo ${jogo} (Jornada ${match.jornada}) para ${this.scheduleText(date, time, location)}.`
+              : `🗓️ O admin removeu a marcação do jogo ${jogo} (Jornada ${match.jornada}).`;
+            await this.sendMessage(this.matchChannelId(matchId), texto, 'schedule', {
+              suggestedDate: date || null, suggestedTime: time || null, suggestedLocation: location || null
+            });
+            this.closeGenericModal();
+            this.render();
+          } catch (error) {
+            console.error('Erro:', error);
+            fail('Erro ao guardar: ' + (error.message || error));
+          }
+        },
+
         renderCalendario() {
           const isAdmin = this.currentUser.role === 'admin';
           const catId = this.currentCategory;
@@ -2945,15 +3266,17 @@
         </div>
         ${isAdmin ? `<p class="text-xs text-gray-500 mt-3">${started ? 'Torneio iniciado. Reiniciar apaga os jogos e volta ao estado aberto (novas datas e novo sorteio).' : '1) Ajusta as datas (opcional). 2) Inicia o torneio — faz o sorteio dos jogos pelas jornadas. As inscrições estão abertas até iniciares.'}</p>` : ''}
       </div>
-      <div class="grid md:grid-cols-3 gap-4">
+      ${started && !isAdmin && this.myPlayerIds().size ? '<p class="text-xs text-gray-500 mb-3">As datas das jornadas são indicativas. Usa <strong>📅 Marcação</strong> nos teus jogos para combinar outro dia e hora com o adversário — mesmo que a jornada anterior ainda não esteja fechada.</p>' : ''}
+      <div class="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
         ${nInscritos < 2 ? '<div class="text-gray-400 text-sm col-span-full">Sem inscritos suficientes para gerar as jornadas.</div>' : windows.map(w => {
             const isFinal = this.jornadaPhase(catId, w.jornada) === 'final';
-            const nJogos = (this.state.matches[catId] || []).filter(m => m.jornada === w.jornada).length;
+            const jMatches = (this.state.matches[catId] || []).filter(m => m.jornada === w.jornada);
             return `
           <div class="bg-white rounded-2xl p-5 shadow-sm border ${isFinal ? 'border-amber-300' : ''} ${started ? '' : 'opacity-90'}">
             <div class="text-xs font-bold ${isFinal ? 'text-amber-600' : 'text-emerald-600'} uppercase">Jornada ${w.jornada} ${isFinal ? '• Fase final' : ''}</div>
             <div class="font-bold text-lg">${this.formatDatePt(w.startDate)} – ${this.formatDatePt(w.endDate)}</div>
-            ${started ? `<div class="text-xs text-gray-500 mt-1">${nJogos} jogo(s)</div>` : ''}
+            ${started ? `<div class="text-xs text-gray-500 mt-1">${jMatches.length} jogo(s)</div>` : ''}
+            ${started && jMatches.length ? `<div class="mt-3 border-t divide-y">${jMatches.map(m => this.calendarMatchRow(catId, m, isAdmin)).join('')}</div>` : ''}
           </div>
         `;
           }).join('')}
@@ -3308,6 +3631,7 @@
             matches = matches.map((m, k) => ({ ...m, id: `${catId}-m${k}` }));
             // Substituir os jogos DESTA categoria (nunca toca nas outras categorias).
             await sb.from('matches').delete().eq('cat_id', catId);
+            await this.deleteMatchChats(catId);
             for (const m of matches) await this.addMatchToSupabase(m, catId);
             this.state.matches[catId] = matches;
             const obj = {
@@ -3374,6 +3698,16 @@
     `);
         },
 
+        // Os ids dos jogos repetem-se num novo sorteio (`${catId}-m0`, ...), por isso o
+        // chat de cada jogo (canal 'match:<id>') é apagado sempre que os jogos o são.
+        async deleteMatchChats(catId) {
+          const { error } = await sb.from('messages').delete().like('channel_id', `match:${catId}-%`);
+          if (error) throw error;
+          Object.keys(this.state.messages)
+            .filter(ch => ch.startsWith(`match:${catId}-`))
+            .forEach(ch => delete this.state.messages[ch]);
+        },
+
         // Volta o torneio ao estado ABERTO: apaga os jogos (sorteio) mas mantém as inscrições.
         async reopenTournament(catId) {
           const cat = this.CATEGORIES.find(c => c.id === catId);
@@ -3381,6 +3715,7 @@
           if (!confirm(`Reiniciar o torneio de ${cat.name}?\n\n• Volta ao estado ABERTO.\n• Os jogos e resultados atuais são apagados.\n• As inscrições mantêm-se (podes alterar as datas e iniciar de novo).`)) return;
           try {
             await sb.from('matches').delete().eq('cat_id', catId);
+            await this.deleteMatchChats(catId);
             this.state.matches[catId] = [];
             // Volta ao estado aberto e limpa o formato sorteado (grupos, fase final, jornadas previstas).
             const obj = {
@@ -3947,6 +4282,37 @@
           return `<div class="flex gap-1.5 justify-center mb-2 text-[10px]">${bits.join('')}</div>`;
         },
 
+        // Resultados: data do jogo (a jornada só dá o intervalo) e botões de marcação.
+        // Quem pede vê "Combinar data"; o adversário, com um pedido pendente, pode
+        // aceitar, rejeitar ou sugerir outra data — tudo ao lado de "Reportar Resultado".
+        resultsScheduleControls(catId, m, myPlayerId, isAdmin, completed) {
+          if (completed) return { scheduleBox: '', scheduleBtns: '' };
+          const pending = this.pendingProposal(m.id);
+          const quando = p => this.escapeHtml(this.scheduleText(p.suggestedDate, p.suggestedTime, p.suggestedLocation) || 'a combinar');
+          const channel = this.matchChannelId(m.id);
+          const btn = (onclick, cls, label) => `<button onclick="${onclick}" class="px-4 py-1.5 ${cls} rounded-lg text-xs font-semibold">${label}</button>`;
+          let linhas = [m.scheduledDate
+            ? `<div class="text-xs font-semibold text-emerald-700">📅 Jogo marcado: ${this.escapeHtml(this.scheduleText(m.scheduledDate, m.scheduledTime, m.scheduledLocation))}</div>`
+            : '<div class="text-xs text-gray-400">📅 Dia do jogo por marcar</div>'];
+          const btns = [];
+          if (pending && myPlayerId && pending.authorId !== myPlayerId) {
+            linhas.push(`<div class="mt-1 inline-block bg-amber-50 border border-amber-300 text-amber-900 rounded-lg px-3 py-1 text-xs">📨 <strong>${this.escapeHtml(this.playerName(catId, pending.authorId))}</strong> pede para jogar: <strong>${quando(pending)}</strong></div>`);
+            btns.push(btn(`app.respondReschedule('${channel}', '${pending.id}', 'accepted')`, 'bg-emerald-500 hover:bg-emerald-600 text-white', '✓ Aceitar'));
+            btns.push(btn(`app.respondReschedule('${channel}', '${pending.id}', 'rejected')`, 'bg-red-500 hover:bg-red-600 text-white', '✗ Rejeitar'));
+            btns.push(btn(`app.openScheduleModal('${m.id}', '${pending.id}')`, 'bg-amber-500 hover:bg-amber-600 text-white', '🔁 Sugerir outra data'));
+          } else if (pending && myPlayerId) {
+            linhas.push(`<div class="mt-1 text-xs text-amber-700">⏳ Pedido enviado (${quando(pending)}) — a aguardar resposta do adversário</div>`);
+            btns.push(btn(`app.openScheduleModal('${m.id}')`, 'bg-amber-100 hover:bg-amber-200 text-amber-800', '📅 Alterar pedido'));
+          } else if (myPlayerId) {
+            btns.push(btn(`app.openScheduleModal('${m.id}')`, 'bg-amber-100 hover:bg-amber-200 text-amber-800', '📅 Combinar data'));
+          } else if (pending && isAdmin) {
+            linhas.push(`<div class="mt-1 text-xs text-amber-700">⏳ Pedido de marcação pendente: ${quando(pending)}</div>`);
+          }
+          if (isAdmin) btns.push(btn(`app.openAdminScheduleModal('${m.id}')`, 'btn-admin text-white', '🗓️ Alterar data'));
+          if (myPlayerId || isAdmin) btns.push(btn(`app.openMatchChat('${m.id}')`, 'bg-indigo-100 hover:bg-indigo-200 text-indigo-800', '💬 Chat'));
+          return { scheduleBox: `<div class="text-center mt-2">${linhas.join('')}</div>`, scheduleBtns: btns.join('') };
+        },
+
         renderMatchesList(catId, isAdmin) {
           const matches = this.state.matches[catId] || [];
           const players = this.state.categories[catId] || [];
@@ -3962,8 +4328,6 @@
             byJornada[m.jornada].push(m);
           });
           if (Object.keys(byJornada).length === 0) return '<div class="text-center py-12 text-gray-500">Sem jogos</div>';
-          const isPlayerInCategory = this.currentUser.role === 'player' && this.currentUser.catId === catId;
-          const myPlayerId = this.currentUser.playerId;
           const t = this.getTournament(catId);
           const windows = this.computeJornadaWindows(t.startDate, t.endDate, this.jornadasForCategory(catId));
           return `
@@ -3985,8 +4349,10 @@
               const completed = this.isMatchComplete(m);
               const winner = completed ? this.getMatchWinner(m) : null;
               const winnerName = winner === m.p1 ? p1.name : (winner === m.p2 ? p2.name : '');
-              const isMyMatch = isPlayerInCategory && (m.p1 === myPlayerId || m.p2 === myPlayerId);
-              const jornadaPast = this.isJornadaPast(catId, m.jornada);
+              // O jogo é meu se uma das participações do atleta (em qualquer categoria) é p1 ou p2.
+              const myPlayerId = this.myIdInMatch(m);
+              const isMyMatch = !!myPlayerId;
+              const jornadaPast = this.isMatchDeadlinePast(catId, m);
               // Regras do jogador: só o seu jogo; reportar só se ainda não inserido e dentro do prazo;
               // se já inserido, só pode contestar (mensagem ao admin).
               let playerBtn = '';
@@ -3999,6 +4365,7 @@
                   playerBtn = `<span class="text-xs text-gray-400 italic">Prazo terminado — só o admin insere</span>`;
                 }
               }
+              const { scheduleBox, scheduleBtns } = this.resultsScheduleControls(catId, m, myPlayerId, isAdmin, completed);
               const scoreStr = m.sets.filter(s => s.p1 !== null && s.p2 !== null).map(s => `${s.p1}-${s.p2}`).join('  ');
               return `
                     <div class="p-4">
@@ -4011,9 +4378,11 @@
                         <div class="flex-1 text-left truncate min-w-0 ${winner === m.p2 ? 'text-emerald-700 font-bold' : 'font-semibold'}">${p2.name} ${m.p2 === myPlayerId ? '<span class="text-xs text-emerald-600">(tu)</span>' : ''}${winner === m.p2 ? ' 🏆' : ''}</div>
                       </div>
                       ${completed && winnerName ? `<div class="text-center text-xs font-semibold text-emerald-700 mt-2">Vencedor: 🏆 ${winnerName}</div>` : ''}
+                      ${scheduleBox}
                       <div class="mt-3 flex justify-center gap-2 flex-wrap">
                         ${isAdmin ? `<button onclick="app.openMatchModal('${catId}', '${m.id}')" class="px-4 py-1.5 btn-admin text-white rounded-lg text-xs font-semibold">${completed ? '✏️ Editar' : '📝 Registar (Admin)'}</button>` : ''}
                         ${playerBtn}
+                        ${scheduleBtns}
                       </div>
                     </div>
                   `;
@@ -4029,7 +4398,9 @@
         // ============================================
         // CHAT
         // ============================================
-        renderChat() {
+        // Canais que o utilizador atual vê: global, categorias, privado com admins e
+        // um canal por jogo (os dois adversários; o admin vê os que têm mensagens).
+        chatChannels() {
           const channels = [
             { id: 'global', name: 'Global', icon: '📢', desc: 'Comunicação entre todas as categorias', color: 'from-indigo-500 to-purple-600' }
           ];
@@ -4062,9 +4433,58 @@
               desc: 'Mensagem privada aos admins', color: 'from-rose-500 to-red-600'
             });
           }
+          const matchChannel = (catId, m) => {
+            const cat = this.CATEGORIES.find(c => c.id === catId);
+            const mine = this.myIdInMatch(m);
+            const quando = m.scheduledDate ? this.scheduleText(m.scheduledDate, m.scheduledTime) : 'por marcar';
+            return {
+              id: this.matchChannelId(m.id), matchId: m.id, icon: '🎾',
+              name: mine ? `vs ${this.playerName(catId, mine === m.p1 ? m.p2 : m.p1)}` : `${this.playerName(catId, m.p1)} vs ${this.playerName(catId, m.p2)}`,
+              desc: `${cat?.name || catId} • J${m.jornada} • ${quando}`,
+              color: 'from-amber-500 to-orange-600'
+            };
+          };
+          if (isAdminUser) {
+            Object.keys(this.state.messages)
+              .filter(chId => chId.startsWith('match:') && (this.state.messages[chId] || []).length)
+              .forEach(chId => {
+                const f = this.findMatch(this.matchIdFromChannel(chId));
+                if (f) channels.push(matchChannel(f.catId, f.match));
+              });
+          } else {
+            Object.entries(this.state.matches).forEach(([catId, matches]) => {
+              (matches || []).filter(m => this.myIdInMatch(m))
+                .sort((a, b) => a.jornada - b.jornada)
+                .forEach(m => channels.push(matchChannel(catId, m)));
+            });
+          }
+          // O admin pode abrir o chat de um jogo ainda sem mensagens (a partir do calendário).
+          const openMatchId = this.matchIdFromChannel(this.currentChatChannel);
+          if (openMatchId && !channels.some(ch => ch.id === this.currentChatChannel) && isAdminUser) {
+            const f = this.findMatch(openMatchId);
+            if (f) channels.push(matchChannel(f.catId, f.match));
+          }
+          return channels;
+        },
+
+        renderChat() {
+          const channels = this.chatChannels();
           const currentChannel = channels.find(ch => ch.id === this.currentChatChannel) || channels[0];
+          if (currentChannel.id !== this.currentChatChannel) this.currentChatChannel = currentChannel.id;
+          this.markAsRead(this.currentChatChannel);
           const messages = this.state.messages[this.currentChatChannel] || [];
           const isAdmin = this.currentUser.role === 'admin';
+          const channelMatch = currentChannel.matchId ? this.findMatch(currentChannel.matchId) : null;
+          const channelMatchOpen = channelMatch && !this.isMatchComplete(channelMatch.match);
+          const isCategoryChannel = this.CATEGORIES.some(c => c.id === this.currentChatChannel);
+          let marcacaoBtn = '';
+          if (channelMatchOpen && isAdmin) {
+            marcacaoBtn = `<button onclick="app.openAdminScheduleModal('${currentChannel.matchId}')" class="px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-800 rounded-lg text-xs font-semibold">🗓️ Alterar data do jogo</button>`;
+          } else if (channelMatchOpen && this.myIdInMatch(channelMatch.match)) {
+            marcacaoBtn = `<button onclick="app.openScheduleModal('${currentChannel.matchId}')" class="px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-800 rounded-lg text-xs font-semibold">📅 Marcação</button>`;
+          } else if (isCategoryChannel) {
+            marcacaoBtn = `<button onclick="app.openSchedulePicker('${this.currentChatChannel}')" class="px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-800 rounded-lg text-xs font-semibold">📅 Marcação</button>`;
+          }
           return `
       <div class="mb-4">
         <div class="flex items-center gap-3 mb-2">
@@ -4130,9 +4550,7 @@
           </div>
           <div class="p-3 border-t border-gray-100 bg-white">
             <div class="flex gap-2 mb-2 flex-wrap">
-              ${this.currentChatChannel !== 'global' && !this.currentChatChannel.startsWith('dm:') ? `
-                <button onclick="app.openRescheduleModal()" class="px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-800 rounded-lg text-xs font-semibold">🔄 Propor Remarcação</button>
-              ` : ''}
+              ${marcacaoBtn}
               ${isAdmin ? `
                 <button onclick="app.openAnnouncementModal()" class="px-3 py-1.5 bg-yellow-100 hover:bg-yellow-200 text-yellow-800 rounded-lg text-xs font-semibold"> Anúncio Oficial</button>
               ` : ''}
@@ -4149,18 +4567,46 @@
 
         renderMessage(msg) {
           const userId = this.currentUser.playerId || 'admin';
-          const isMine = msg.authorId === userId;
+          const isMine = msg.authorId === userId || this.myPlayerIds().has(msg.authorId);
           const isAdminMsg = msg.authorRole === 'admin';
           const time = new Date(msg.timestamp).toLocaleString('pt-PT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+          const authorName = this.escapeHtml(msg.authorName || '');
           if (msg.type === 'announcement') {
-            return `<div class="chat-message msg-announcement mb-3"><div class="msg-bubble"><div class="flex items-center gap-2 mb-1"><span class="text-sm">📢</span><span class="font-bold text-xs uppercase">Anúncio Oficial</span><span class="text-[10px] opacity-70 ml-auto">${time}</span></div><div class="text-sm">${this.escapeHtml(msg.text)}</div><div class="text-[10px] opacity-70 mt-1">— ${msg.authorName}</div></div></div>`;
+            return `<div class="chat-message msg-announcement mb-3"><div class="msg-bubble"><div class="flex items-center gap-2 mb-1"><span class="text-sm">📢</span><span class="font-bold text-xs uppercase">Anúncio Oficial</span><span class="text-[10px] opacity-70 ml-auto">${time}</span></div><div class="text-sm">${this.escapeHtml(msg.text)}</div><div class="text-[10px] opacity-70 mt-1">— ${authorName}</div></div></div>`;
+          }
+          if (msg.type === 'schedule') {
+            // Aviso de marcação: confirmada entre os jogadores ou alterada pelo admin.
+            return `<div class="chat-message msg-announcement mb-3"><div class="msg-bubble"><div class="flex items-center gap-2 mb-1"><span class="text-sm">🗓️</span><span class="font-bold text-xs uppercase">Marcação do jogo</span><span class="text-[10px] opacity-70 ml-auto">${time}</span></div><div class="text-sm">${this.escapeHtml(msg.text)}</div><div class="text-[10px] opacity-70 mt-1">— ${authorName}</div></div></div>`;
           }
           if (msg.type === 'reschedule') {
-            const responseClass = msg.rescheduleResponse === 'accepted' ? 'accepted' : msg.rescheduleResponse === 'rejected' ? 'rejected' : '';
-            return `<div class="chat-message msg-reschedule mb-3"><div class="msg-bubble"><div class="flex items-center gap-2 mb-2"><span class="text-sm">🔄</span><span class="font-bold text-xs uppercase">Proposta de Remarcação</span><span class="text-[10px] opacity-70 ml-auto">${time}</span></div><div class="text-sm mb-2">${this.escapeHtml(msg.text)}</div><div class="reschedule-card ${responseClass}"><div class="text-xs mb-1">📅 <strong>Data:</strong> ${msg.suggestedDate || 'A combinar'}</div><div class="text-xs">⏰ <strong>Hora:</strong> ${msg.suggestedTime || 'A combinar'}</div>${msg.rescheduleResponse ? `<div class="mt-2 pt-2 border-t border-amber-200 text-xs">${msg.rescheduleResponse === 'accepted' ? '✅' : '❌'} <strong>${msg.rescheduleResponse === 'accepted' ? 'Aceite' : 'Rejeitada'}</strong> por ${msg.rescheduleResponder}</div>` : (!isMine ? `<div class="mt-2 pt-2 border-t border-amber-200 flex gap-2"><button onclick="app.respondReschedule('${this.currentChatChannel}', '${msg.id}', 'accepted')" class="flex-1 px-2 py-1 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-xs font-semibold">✓ Aceitar</button><button onclick="app.respondReschedule('${this.currentChatChannel}', '${msg.id}', 'rejected')" class="flex-1 px-2 py-1 bg-red-500 hover:bg-red-600 text-white rounded text-xs font-semibold">✗ Rejeitar</button></div>` : '<div class="mt-2 pt-2 border-t border-amber-200 text-xs italic text-amber-800">⏳ Aguardando resposta...</div>')}</div><div class="text-[10px] opacity-70 mt-2">— ${msg.authorName}</div></div></div>`;
+            const channel = this.currentChatChannel;
+            const found = this.findMatch(this.matchIdFromChannel(channel));
+            const r = msg.rescheduleResponse;
+            const responseClass = r === 'accepted' ? 'accepted' : (r === 'rejected' ? 'rejected' : '');
+            const estados = {
+              accepted: `✅ <strong>Aceite</strong> por ${this.escapeHtml(msg.rescheduleResponder || '')}`,
+              rejected: `❌ <strong>Rejeitada</strong> por ${this.escapeHtml(msg.rescheduleResponder || '')}`,
+              countered: `🔁 <strong>${this.escapeHtml(msg.rescheduleResponder || '')}</strong> propôs outra data`,
+              superseded: '⏭️ Substituída por uma marcação mais recente'
+            };
+            // Quem pode responder: no chat de um jogo, só o lado adversário de quem propôs;
+            // nas propostas antigas do chat da categoria, qualquer outro atleta (como antes).
+            let canRespond;
+            if (found) {
+              const mine = this.myIdInMatch(found.match);
+              canRespond = !!mine && mine !== msg.authorId && !this.isMatchComplete(found.match);
+            } else {
+              canRespond = !isMine && this.currentUser.role !== 'admin';
+            }
+            const acoes = r
+              ? `<div class="mt-2 pt-2 border-t border-amber-200 text-xs">${estados[r] || this.escapeHtml(r)}</div>`
+              : (canRespond
+                ? `<div class="mt-2 pt-2 border-t border-amber-200 flex gap-2 flex-wrap"><button onclick="app.respondReschedule('${channel}', '${msg.id}', 'accepted')" class="flex-1 px-2 py-1 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-xs font-semibold">✓ Aceitar</button><button onclick="app.respondReschedule('${channel}', '${msg.id}', 'rejected')" class="flex-1 px-2 py-1 bg-red-500 hover:bg-red-600 text-white rounded text-xs font-semibold">✗ Rejeitar</button>${found ? `<button onclick="app.openScheduleModal('${found.match.id}', '${msg.id}')" class="flex-1 px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded text-xs font-semibold whitespace-nowrap">🔁 Propor outra data</button>` : ''}</div>`
+                : '<div class="mt-2 pt-2 border-t border-amber-200 text-xs italic text-amber-800">⏳ A aguardar resposta do adversário...</div>');
+            return `<div class="chat-message msg-reschedule mb-3"><div class="msg-bubble"><div class="flex items-center gap-2 mb-2"><span class="text-sm">📅</span><span class="font-bold text-xs uppercase">Proposta de Marcação</span><span class="text-[10px] opacity-70 ml-auto">${time}</span></div><div class="text-sm mb-2">${this.escapeHtml(msg.text)}</div><div class="reschedule-card ${responseClass}"><div class="text-xs mb-1">📅 <strong>Dia:</strong> ${this.escapeHtml(this.formatScheduleDate(msg.suggestedDate) || 'A combinar')}</div><div class="text-xs">⏰ <strong>Hora:</strong> ${this.escapeHtml(msg.suggestedTime || 'A combinar')}</div>${msg.suggestedLocation ? `<div class="text-xs mt-1">📍 <strong>Local:</strong> ${this.escapeHtml(msg.suggestedLocation)}</div>` : ''}${acoes}</div><div class="text-[10px] opacity-70 mt-2">— ${authorName}</div></div></div>`;
           }
           const avatarColor = isAdminMsg ? 'admin-badge' : 'profile-badge';
-          return `<div class="chat-message ${isMine ? 'msg-mine' : 'msg-other'} mb-3"><div class="flex ${isMine ? 'flex-row-reverse' : 'flex-row'} gap-2 items-end"><div class="msg-avatar ${avatarColor}">${msg.authorName.charAt(0).toUpperCase()}</div><div>${!isMine ? `<div class="text-[10px] text-gray-500 mb-0.5"><strong>${msg.authorName}</strong> ${isAdminMsg ? '👑' : ''}</div>` : ''}<div class="msg-bubble"><div class="text-sm">${this.escapeHtml(msg.text)}</div></div><div class="text-[10px] text-gray-400 mt-0.5 ${isMine ? 'text-right' : ''}">${time}</div></div></div></div>`;
+          return `<div class="chat-message ${isMine ? 'msg-mine' : 'msg-other'} mb-3"><div class="flex ${isMine ? 'flex-row-reverse' : 'flex-row'} gap-2 items-end"><div class="msg-avatar ${avatarColor}">${authorName.charAt(0).toUpperCase()}</div><div>${!isMine ? `<div class="text-[10px] text-gray-500 mb-0.5"><strong>${authorName}</strong> ${isAdminMsg ? '👑' : ''}</div>` : ''}<div class="msg-bubble"><div class="text-sm">${this.escapeHtml(msg.text)}</div></div><div class="text-[10px] text-gray-400 mt-0.5 ${isMine ? 'text-right' : ''}">${time}</div></div></div></div>`;
         },
 
         escapeHtml(text) {
@@ -4191,22 +4637,33 @@
           }, 100);
         },
 
+        // Marcas de "lido" por canal. Ficam guardadas no browser para que as
+        // notificações (ex.: o admin mudou a data de um jogo) sobrevivam a um recarregar.
+        readMarks() {
+          if (!this._readMarksLoaded) {
+            this._readMarksLoaded = true;
+            try { Object.assign(this.state.readMessages, JSON.parse(localStorage.getItem('emtpRead_v1') || '{}')); } catch (e) { }
+          }
+          return this.state.readMessages;
+        },
+
         getUnreadCount(channelId) {
           const userId = this.currentUser?.playerId || 'admin';
-          const lastRead = this.state.readMessages[`${userId}_${channelId}`] || 0;
+          const myIds = this.myPlayerIds();
+          const lastRead = this.readMarks()[`${userId}_${channelId}`] || 0;
           const messages = this.state.messages[channelId] || [];
-          return messages.filter(m => m.timestamp > lastRead && m.authorId !== userId).length;
+          return messages.filter(m => new Date(m.timestamp).getTime() > lastRead && m.authorId !== userId && !myIds.has(m.authorId)).length;
         },
 
         getTotalUnread() {
-          let total = this.getUnreadCount('global');
-          this.CATEGORIES.forEach(c => total += this.getUnreadCount(c.id));
-          return total;
+          if (!this.currentUser) return 0;
+          return this.chatChannels().reduce((total, ch) => total + this.getUnreadCount(ch.id), 0);
         },
 
         markAsRead(channelId) {
           const userId = this.currentUser?.playerId || 'admin';
-          this.state.readMessages[`${userId}_${channelId}`] = Date.now();
+          this.readMarks()[`${userId}_${channelId}`] = Date.now();
+          try { localStorage.setItem('emtpRead_v1', JSON.stringify(this.state.readMessages)); } catch (e) { }
         },
 
         handleChatSend() {
@@ -4214,7 +4671,11 @@
           if (!input) return;
           const text = input.value.trim();
           if (!text) return;
-          this.sendMessage(this.currentChatChannel, text, 'message');
+          const matchId = this.matchIdFromChannel(this.currentChatChannel);
+          const found = matchId ? this.findMatch(matchId) : null;
+          const mine = found ? this.myIdInMatch(found.match) : null;
+          // No chat de um jogo o autor é o lado do jogo (pode não ser a 1ª participação do atleta).
+          this.sendMessage(this.currentChatChannel, text, 'message', mine ? { authorId: mine } : {});
           input.value = '';
           input.focus();
         },
@@ -4241,69 +4702,70 @@
           }
         },
 
+        // Responder a uma proposta de marcação. Aceitar num chat de jogo grava o
+        // dia/hora no jogo e avisa os dois jogadores.
         async respondReschedule(channelId, messageId, response) {
+          const msg = (this.state.messages[channelId] || []).find(x => x.id === messageId);
+          if (!msg || msg.rescheduleResponse) return;
+          const found = this.findMatch(this.matchIdFromChannel(channelId));
           try {
-            await this.updateMessageResponse(channelId, messageId, response);
+            if (found) {
+              const { catId, match } = found;
+              const mine = this.myIdInMatch(match);
+              if (!mine || mine === msg.authorId) { alert('Só o adversário pode responder a esta proposta.'); return; }
+              if (response === 'accepted') {
+                await this.saveMatchSchedule(match, msg.suggestedDate, msg.suggestedTime, msg.suggestedLocation);
+              }
+              await this.updateMessageResponse(messageId, response);
+              msg.rescheduleResponse = response;
+              msg.rescheduleResponder = this.currentUser.name;
+              const quando = this.scheduleText(msg.suggestedDate, msg.suggestedTime, msg.suggestedLocation);
+              if (response === 'accepted') {
+                await this.sendMessage(channelId, `✅ Marcação confirmada: ${this.playerName(catId, match.p1)} vs ${this.playerName(catId, match.p2)} (Jornada ${match.jornada}) — ${quando}.`, 'schedule', { authorId: mine });
+              }
+            } else {
+              await this.updateMessageResponse(messageId, response);
+            }
+            this.render();
           } catch (error) {
             console.error('Erro:', error);
-            alert('Erro ao responder. Tenta novamente.');
+            alert('Erro ao responder: ' + (error.message || error));
           }
         },
 
-        openRescheduleModal() {
-          if (this.currentChatChannel === 'global') { alert('Propostas de remarcação só no chat da categoria.'); return; }
-          const cat = this.CATEGORIES.find(c => c.id === this.currentChatChannel);
+        // Botão "Marcação" no chat da categoria: escolher o jogo e seguir para o chat desse jogo.
+        openSchedulePicker(catId) {
+          const cat = this.CATEGORIES.find(c => c.id === catId);
+          const isAdmin = this.currentUser.role === 'admin';
+          const jogos = (this.state.matches[catId] || [])
+            .filter(m => !this.isMatchComplete(m) && (isAdmin || this.myIdInMatch(m)))
+            .sort((a, b) => a.jornada - b.jornada);
+          if (!jogos.length) {
+            alert(isAdmin ? 'Não há jogos por realizar nesta categoria.' : 'Não tens jogos por realizar nesta categoria.');
+            return;
+          }
           this.openGenericModal(`
       <div class="p-6">
         <div class="flex items-center justify-between mb-4">
           <div class="flex items-center gap-3">
-            <div class="w-10 h-10 bg-amber-500 rounded-xl flex items-center justify-center text-white text-lg">🔄</div>
+            <div class="w-10 h-10 bg-amber-500 rounded-xl flex items-center justify-center text-white text-lg">📅</div>
             <div>
-              <h3 class="text-xl font-bold text-gray-900">Propor Remarcação</h3>
-              <p class="text-xs text-gray-500">Chat: ${cat.icon} ${cat.name}</p>
+              <h3 class="text-xl font-bold text-gray-900">Marcação</h3>
+              <p class="text-xs text-gray-500">${cat.icon} ${cat.name} • escolhe o jogo</p>
             </div>
           </div>
           <button onclick="app.closeGenericModal()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
         </div>
-        <div class="space-y-3">
-          <div>
-            <label class="block text-sm font-semibold text-gray-700 mb-1">Mensagem *</label>
-            <textarea id="rescheduleText" rows="3" class="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-amber-400 outline-none text-sm" placeholder="Ex: Olá, não poderei comparecer no horário marcado. Podemos remarcar?"></textarea>
-          </div>
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="block text-xs font-semibold text-gray-600 mb-1">Data sugerida</label>
-              <input id="rescheduleDate" type="date" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
-            </div>
-            <div>
-              <label class="block text-xs font-semibold text-gray-600 mb-1">Hora sugerida</label>
-              <input id="rescheduleTime" type="time" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
-            </div>
-          </div>
-          <div>
-            <label class="block text-xs font-semibold text-gray-600 mb-1">Local (opcional)</label>
-            <input id="rescheduleLocation" type="text" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" placeholder="Ex: Court 2 - Clube">
-          </div>
-        </div>
-        <div class="flex gap-2 pt-4">
-          <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">Cancelar</button>
-          <button onclick="app.submitReschedule()" class="flex-1 bg-gradient-to-r from-amber-500 to-orange-600 text-white px-4 py-2 rounded-lg font-semibold">🔄 Enviar Proposta</button>
+        <div class="space-y-2 max-h-96 overflow-y-auto scrollbar-thin">
+          ${jogos.map(m => `
+            <button onclick="${isAdmin ? `app.openAdminScheduleModal('${m.id}')` : `app.openScheduleModal('${m.id}')`}" class="w-full text-left p-3 border rounded-xl hover:bg-amber-50">
+              <div class="text-xs font-bold text-emerald-600 uppercase">Jornada ${m.jornada}</div>
+              <div class="text-sm font-semibold">${this.escapeHtml(this.playerName(catId, m.p1))} vs ${this.escapeHtml(this.playerName(catId, m.p2))}</div>
+              <div class="text-xs text-gray-500">${m.scheduledDate ? '📅 ' + this.escapeHtml(this.scheduleText(m.scheduledDate, m.scheduledTime, m.scheduledLocation)) : 'Por marcar'}</div>
+            </button>`).join('')}
         </div>
       </div>
     `);
-        },
-
-        async submitReschedule() {
-          const text = document.getElementById('rescheduleText').value.trim();
-          const date = document.getElementById('rescheduleDate').value;
-          const time = document.getElementById('rescheduleTime').value;
-          const location = document.getElementById('rescheduleLocation').value.trim();
-          if (!text) { alert('Escreve uma mensagem'); return; }
-          const suggestedDate = date ? new Date(date).toLocaleDateString('pt-PT') : '';
-          await this.sendMessage(this.currentChatChannel, text, 'reschedule', {
-            suggestedDate, suggestedTime: time || '', suggestedLocation: location
-          });
-          this.closeGenericModal();
         },
 
         openAnnouncementModal() {
@@ -5099,7 +5561,9 @@
           const inscricoes = (this.state.inscriptions || []).filter(x => all || x.cat_id === scope).length;
           const mensagens = all
             ? Object.values(this.state.messages || {}).reduce((n, m) => n + m.length, 0)
-            : ((this.state.messages || {})[scope] || []).length;
+            : Object.entries(this.state.messages || {})
+              .filter(([ch]) => ch === scope || ch.startsWith(`match:${scope}-`))
+              .reduce((n, [, m]) => n + m.length, 0);
           const torneios = cats.filter(id => (this.state.tournaments || {})[id]).length;
           return { all, cats, atletas, jogos, inscricoes, mensagens, torneios };
         },
@@ -5230,6 +5694,7 @@
               await sb.from('inscriptions').delete().eq('cat_id', scope);
               await sb.from('tournaments').delete().eq('cat_id', scope);
               await sb.from('messages').delete().eq('channel_id', scope);
+              await this.deleteMatchChats(scope);
             }
             // accounts e player_logins NÃO são apagados — as contas persistem.
             await this.loadData();
@@ -5685,7 +6150,7 @@
             alert('⚠️ Só podes inserir o resultado dos teus jogos.'); return;
           }
           if (match.completed) { alert('⚠️ Este resultado já foi inserido. Se estiver errado, usa "Contestar resultado".'); return; }
-          if (this.currentUser.role === 'player' && this.isJornadaPast(catId, match.jornada)) {
+          if (this.currentUser.role === 'player' && this.isMatchDeadlinePast(catId, match)) {
             alert('⚠️ O prazo desta jornada já terminou. Só o admin pode inserir o resultado — usa "Contestar resultado" para falar com o admin.'); return;
           }
           const sets = [0, 1, 2].map(i => ({
