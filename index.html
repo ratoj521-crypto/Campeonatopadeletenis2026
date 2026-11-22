@@ -586,7 +586,7 @@
       const DEMO_KEY = 'emtp-demo-db';
       const DEMO_PK = {
         players: 'id', matches: 'id', messages: 'id', inscriptions: 'id',
-        tournaments: 'cat_id', accounts: 'email', playoffs: 'cat_id', profiles: 'id'
+        tournaments: 'cat_id', accounts: 'email', playoffs: 'cat_id', profiles: 'id', categories: 'id'
       };
 
       // Inscritos de exemplo, com números diferentes por categoria para dar
@@ -602,7 +602,10 @@
           { cat: 'padel-M4', n: 11, lot: 12, sport: 'padel', type: 'doubles' },
           { cat: 'padel-M3', n: 12, lot: 16, sport: 'padel', type: 'doubles' },
           { cat: 'padel-F45', n: 6, lot: 8, sport: 'padel', type: 'doubles' },
-          { cat: 'padel-MX', n: 3, lot: 8, sport: 'padel', type: 'doubles' }
+          { cat: 'padel-MX', n: 3, lot: 8, sport: 'padel', type: 'doubles' },
+          { cat: 'tenis-juvenis-masc', n: 8, lot: 8, sport: 'tenis', type: 'single' },
+          { cat: 'tenis-juvenis-fem', n: 5, lot: 8, sport: 'tenis', type: 'single' },
+          { cat: 'tenis-mini', n: 6, lot: 8, sport: 'tenis', type: 'single' }
         ];
         const players = [], accounts = [], tournaments = [];
         plano.forEach(({ cat, n, lot, sport, type }) => {
@@ -813,8 +816,33 @@
           { id: 'padel-M4', name: 'M4', icon: '🏆', color: 'from-amber-500 to-amber-700', sport: 'padel', desc: 'Masculino 4ª Categoria' },
           { id: 'padel-M3', name: 'M3', icon: '🏆', color: 'from-yellow-500 to-yellow-700', sport: 'padel', desc: 'Masculino 3ª Categoria' },
           { id: 'padel-F45', name: 'F4/5', icon: '🏆', color: 'from-pink-500 to-rose-700', sport: 'padel', desc: 'Feminino 4ª/5ª Categoria' },
-          { id: 'padel-MX', name: 'MX', icon: '🏆', color: 'from-indigo-500 to-indigo-700', sport: 'padel', desc: 'Misto' }
+          { id: 'padel-MX', name: 'MX', icon: '🏆', color: 'from-indigo-500 to-indigo-700', sport: 'padel', desc: 'Misto' },
+          // Escalões jovens: grupo único de 4 a 6, ou 2 grupos de 4 + meia-final e final;
+          // jogos de 20 min ao sábado à tarde (1 a 3 sábados, conforme o nº de inscritos).
+          { id: 'tenis-juvenis-masc', name: 'Juvenis Masculinos', icon: '🧒', color: 'from-cyan-500 to-cyan-700', sport: 'tenis', desc: 'Escalão jovem', formatRule: 'juvenis', scheduleMode: 'saturday' },
+          { id: 'tenis-juvenis-fem', name: 'Juvenis Femininos', icon: '👧', color: 'from-fuchsia-500 to-fuchsia-700', sport: 'tenis', desc: 'Escalão jovem', formatRule: 'juvenis', scheduleMode: 'saturday' },
+          { id: 'tenis-mini', name: 'Mini-Ténis', icon: '🎾', color: 'from-lime-500 to-green-700', sport: 'tenis', desc: 'Mini-Ténis', formatRule: 'juvenis', scheduleMode: 'saturday' }
         ],
+        // Categorias por defeito (as de cima). A lista efetiva (this.CATEGORIES) é esta,
+        // sobreposta pelas linhas da tabela `categories` do Supabase — é aí que o admin
+        // cria, edita ou esconde escalões (separador 🏷️ Escalões). Se a tabela ainda não
+        // existir, a app usa só estas, exatamente como antes.
+        DEFAULT_CATEGORIES: null,
+        CATEGORY_DEFAULTS: {
+          desc: '', sortOrder: 100, active: true,
+          formatRule: 'standard',      // 'standard' (sugestão antiga) | 'juvenis' (≤6: grupo único; >6: 2 grupos + meia-final e final)
+          scheduleMode: 'weekly',      // 'weekly' (jornadas ao longo de semanas) | 'saturday' (dias de jogo, horários automáticos)
+          matchDays: [],               // datas (YYYY-MM-DD) dos sábados de jogo
+          dayStart: '14:30', dayEnd: '19:30', matchMinutes: 20, courts: 2
+        },
+        FORMAT_RULES: {
+          standard: 'Padrão (sugestão pelo nº de inscritos)',
+          juvenis: 'Escalão jovem: 4–6 → grupo único; mais de 6 → 2 grupos + meia-final e final'
+        },
+        SCHEDULE_MODES: {
+          weekly: 'Jornadas semanais (datas indicativas, os atletas combinam)',
+          saturday: 'Dias de jogo ao sábado (horários e campos automáticos)'
+        },
         // Lotação por defeito de uma categoria. O admin pode definir outra por categoria
         // (Calendário → Datas e Lotação), guardada em tournaments.capacity.
         MAX_PER_CATEGORY: 8,
@@ -829,8 +857,9 @@
         ],
         // Intervalo de referência do calendário (mock): 14 Set → 15 Nov. É o intervalo MÁXIMO
         // permitido entre início e fim de um torneio; as jornadas são distribuídas com igual duração.
-        MOCK_START: '2026-09-14',
-        MOCK_END: '2026-11-15',
+        // Calculado a partir da data de hoje (sem ano fixo), para servir vários torneios.
+        MOCK_START: new Date().toISOString().slice(0, 10),
+        MOCK_END: new Date(Date.now() + 62 * 86400000).toISOString().slice(0, 10),
 
         // Estado local (cache dos dados do Supabase)
         state: {
@@ -895,9 +924,541 @@
         },
 
         // ============================================
+        // ESCALÕES / CATEGORIAS (configuráveis pelo admin)
+        // ============================================
+        // Completa uma categoria com os valores por defeito (formato, calendário).
+        normalizeCategory(c, idx) {
+          const d = this.CATEGORY_DEFAULTS;
+          return {
+            ...d,
+            sortOrder: idx === undefined ? d.sortOrder : idx * 10,
+            ...c,
+            matchDays: Array.isArray(c.matchDays) ? [...c.matchDays].filter(Boolean).sort() : [],
+            courts: parseInt(c.courts) || d.courts,
+            matchMinutes: parseInt(c.matchMinutes) || d.matchMinutes,
+            active: c.active !== false
+          };
+        },
+
+        categoryFromRow(r) {
+          const o = { id: r.id };
+          const map = {
+            name: 'name', description: 'desc', icon: 'icon', color: 'color', sport: 'sport',
+            sort_order: 'sortOrder', active: 'active', format_rule: 'formatRule', schedule_mode: 'scheduleMode',
+            match_days: 'matchDays', day_start: 'dayStart', day_end: 'dayEnd', match_minutes: 'matchMinutes', courts: 'courts'
+          };
+          Object.entries(map).forEach(([col, key]) => { if (r[col] !== null && r[col] !== undefined) o[key] = r[col]; });
+          return o;
+        },
+
+        categoryToRow(c) {
+          return {
+            id: c.id, name: c.name, description: c.desc || null, icon: c.icon, color: c.color, sport: c.sport,
+            sort_order: c.sortOrder, active: c.active !== false, format_rule: c.formatRule, schedule_mode: c.scheduleMode,
+            match_days: c.matchDays || [], day_start: c.dayStart, day_end: c.dayEnd,
+            match_minutes: c.matchMinutes, courts: c.courts, updated_at: new Date().toISOString()
+          };
+        },
+
+        // Lê a tabela `categories` e sobrepõe-na às categorias por defeito. Se a tabela
+        // ainda não existir (SQL por correr), fica tudo como estava — nunca falha o arranque.
+        async loadCategories() {
+          if (!this.DEFAULT_CATEGORIES) this.DEFAULT_CATEGORIES = this.CATEGORIES.map((c, i) => this.normalizeCategory(c, i));
+          const byId = {};
+          this.DEFAULT_CATEGORIES.forEach(c => { byId[c.id] = { ...c }; });
+          this.categoriesTableReady = false;
+          try {
+            const { data, error } = await sb.from('categories').select('*');
+            if (!error && Array.isArray(data)) {
+              this.categoriesTableReady = true;
+              data.forEach(r => {
+                const row = this.categoryFromRow(r);
+                byId[r.id] = this.normalizeCategory({ ...(byId[r.id] || {}), ...row });
+              });
+            }
+          } catch (e) { console.warn('Tabela categories indisponível — a usar categorias por defeito.', e); }
+          this.ALL_CATEGORIES = Object.values(byId).sort((a, b) => (a.sortOrder - b.sortOrder) || a.name.localeCompare(b.name));
+          this.CATEGORIES = this.ALL_CATEGORIES.filter(c => c.active);
+          if (!this.CATEGORIES.find(c => c.id === this.currentCategory) && this.CATEGORIES[0]) {
+            this.currentCategory = this.CATEGORIES[0].id;
+          }
+        },
+
+        getCategory(catId) {
+          return (this.ALL_CATEGORIES || this.CATEGORIES).find(c => c.id === catId);
+        },
+
+        // ============================================
+        // DIAS DE JOGO AO SÁBADO (horários automáticos)
+        // ============================================
+        isSaturdayMode(catId) {
+          return this.getCategory(catId)?.scheduleMode === 'saturday';
+        },
+        timeToMin(t) { const [h, m] = String(t || '0:0').split(':').map(Number); return (h || 0) * 60 + (m || 0); },
+        minToTime(n) { return String(Math.floor(n / 60)).padStart(2, '0') + ':' + String(n % 60).padStart(2, '0'); },
+        isSaturday(str) { return /^\d{4}-\d{2}-\d{2}$/.test(str || '') && this._d(str).getUTCDay() === 6; },
+        // Próximos `n` sábados a partir de hoje (sugestão no formulário).
+        nextSaturdays(n) {
+          let d = this.todayStr();
+          while (!this.isSaturday(d)) d = this.addDaysStr(d, 1);
+          return Array.from({ length: n }, (_, i) => this.addDaysStr(d, i * 7));
+        },
+        matchDaysFor(catId) {
+          const days = this.getCategory(catId)?.matchDays || [];
+          if (days.length) return days;
+          const t = this.getTournament(catId);
+          return [t.startDate];
+        },
+        // Nº de jogos seguidos que cabem numa tarde em cada campo.
+        slotsPerDay(cat) {
+          return Math.max(1, Math.floor((this.timeToMin(cat.dayEnd) - this.timeToMin(cat.dayStart)) / (cat.matchMinutes || 20)));
+        },
+        // Dia (índice) em que se joga uma jornada: as jornadas repartem-se pelos sábados
+        // por ordem; a fase final fica sempre no último sábado.
+        jornadaDayIndex(nDays, jornada, totalJornadas) {
+          if (nDays <= 1 || !totalJornadas) return 0;
+          return Math.min(nDays - 1, Math.floor((jornada - 1) * nDays / totalJornadas));
+        },
+        // Janelas das jornadas: no modo sábado cada jornada é o seu dia de jogo.
+        jornadaWindowsFor(catId, count) {
+          const t = this.getTournament(catId);
+          if (!this.isSaturdayMode(catId)) return this.computeJornadaWindows(t.startDate, t.endDate, count);
+          const days = this.matchDaysFor(catId);
+          const n = count || 1;
+          return Array.from({ length: n }, (_, i) => {
+            const d = days[this.jornadaDayIndex(days.length, i + 1, n)];
+            return { jornada: i + 1, startDate: d, endDate: d };
+          });
+        },
+
+        // Atribui dia, hora e campo a cada jogo. Respeita os campos já ocupados nesse dia
+        // por QUALQUER categoria (os escalões partilham os campos) e põe cada jornada a
+        // seguir à anterior, para ninguém jogar dois jogos ao mesmo tempo.
+        // opts.afterExisting: começa depois dos jogos desta categoria já marcados (fase final).
+        autoScheduleMatches(catId, matches, totalJornadas, opts) {
+          const o = opts || {};
+          const cat = this.getCategory(catId);
+          const days = this.matchDaysFor(catId);
+          const step = cat.matchMinutes || 20;
+          const start = this.timeToMin(cat.dayStart);
+          const courts = Math.max(1, cat.courts || 1);
+          const lastRow = this.slotsPerDay(cat) - 1;
+          const courtName = k => `Campo ${k + 1}`;
+          const rowOf = time => Math.round((this.timeToMin(time) - start) / step);
+          // Ocupação atual: "data|linha|campo".
+          const occ = new Set();
+          const catRow = {};
+          Object.entries(this.state.matches || {}).forEach(([cid, list]) => (list || []).forEach(m => {
+            if (!m.scheduledDate || !m.scheduledTime) return;
+            if (!o.afterExisting && cid === catId) return;   // vão ser substituídos
+            occ.add(`${m.scheduledDate}|${rowOf(m.scheduledTime)}|${m.scheduledLocation || ''}`);
+            if (cid === catId) catRow[m.scheduledDate] = Math.max(catRow[m.scheduledDate] || 0, rowOf(m.scheduledTime) + 1);
+          }));
+          const jornadas = [...new Set(matches.map(m => m.jornada))].sort((a, b) => a - b);
+          let overflow = false;
+          jornadas.forEach(j => {
+            const date = days[this.jornadaDayIndex(days.length, j, totalJornadas)];
+            const row = catRow[date] || 0;
+            let maxRow = row - 1;
+            matches.filter(m => m.jornada === j).forEach(m => {
+              let r = row, placed = false;
+              while (!placed) {
+                for (let k = 0; k < courts && !placed; k++) {
+                  const key = `${date}|${r}|${courtName(k)}`;
+                  if (!occ.has(key)) {
+                    occ.add(key);
+                    m.scheduledDate = date;
+                    m.scheduledTime = this.minToTime(start + r * step);
+                    m.scheduledLocation = courtName(k);
+                    placed = true;
+                  }
+                }
+                if (!placed) r++;
+              }
+              if (r > lastRow) overflow = true;
+              maxRow = Math.max(maxRow, r);
+            });
+            catRow[date] = maxRow + 1;
+          });
+          return { overflow };
+        },
+
+        // Estimativa (antes do sorteio) de quanto tempo ocupa cada sábado e quantos
+        // sábados são recomendados. Usa jogos fictícios com o mesmo formato.
+        saturdayPlanPreview(catId, n, cfg) {
+          const cat = this.getCategory(catId);
+          const plan = this.planTournament(n, cfg);
+          const fake = [];
+          plan.sizes.forEach((sz, g) => {
+            const ids = Array.from({ length: sz }, (_, i) => `g${g}-${i}`);
+            fake.push(...this.generateRoundRobin(ids, { legs: plan.legs, startJornada: 1, groupIdx: g }));
+          });
+          // Fase final: nº de jogos por jornada (quadro: metade dos apurados por ronda; a
+          // ronda decisiva tem final + 3º/4º lugar).
+          for (let j = 1; j <= plan.finalJornadas; j++) {
+            let count = 1;
+            if (plan.finalType === 'bracket') {
+              const size = this.nextPowerOfTwo(plan.qualifiers);
+              const round = Math.floor((j - 1) / (plan.finalLegs || 1));
+              const teams = size / Math.pow(2, round);
+              count = teams === 2 && round > 0 ? 2 : Math.max(1, Math.min(plan.qualifiers, teams) / 2);
+            } else if (plan.finalType === 'minigroup') count = Math.floor(plan.qualifiers / 2);
+            for (let k = 0; k < count; k++) fake.push({ jornada: plan.groupJornadas + j, p1: 'x', p2: 'y' });
+          }
+          const saved = this.state.matches;
+          this.state.matches = {};   // estimativa isolada (sem outras categorias)
+          let res;
+          try { res = this.autoScheduleMatches(catId, fake, plan.totalJornadas); } finally { this.state.matches = saved; }
+          const days = this.matchDaysFor(catId);
+          const perDay = days.map(d => {
+            const ms = fake.filter(m => m.scheduledDate === d);
+            if (!ms.length) return { date: d, count: 0 };
+            const times = ms.map(m => this.timeToMin(m.scheduledTime));
+            return { date: d, count: ms.length, first: this.minToTime(Math.min(...times)), end: this.minToTime(Math.max(...times) + (cat.matchMinutes || 20)) };
+          });
+          // Recomendação: 1 sábado se tudo couber numa tarde; senão 3.
+          const rowsNeeded = Math.ceil(fake.length / Math.max(1, cat.courts));
+          const recommended = rowsNeeded <= this.slotsPerDay(cat) ? 1 : 3;
+          return { plan, perDay, overflow: res.overflow, totalMatches: fake.length, recommended };
+        },
+
+        saturdayPreviewHTML(catId, n, cfg) {
+          const cat = this.getCategory(catId);
+          const p = this.saturdayPlanPreview(catId, n, cfg);
+          const days = this.matchDaysFor(catId);
+          const semDatas = !(cat.matchDays || []).length;
+          return `
+        <div class="mt-2 pt-2 border-t border-blue-200">
+          <div class="font-bold">🗓️ Sábados de jogo (${cat.matchMinutes} min por jogo • ${cat.courts} campo(s) • ${cat.dayStart}–${cat.dayEnd})</div>
+          ${semDatas ? '<div class="font-bold text-red-700">⚠️ Ainda não definiste os sábados — usa 📅 Datas e Lotação.</div>' : ''}
+          ${p.perDay.map((d, i) => `<div>• Sábado ${i + 1} (${this.formatScheduleDate(d.date)}): ${d.count ? `${d.count} jogo(s), ${d.first}–${d.end}` : 'sem jogos'}</div>`).join('')}
+          <div class="mt-1">• ${p.totalMatches} jogo(s) no total. ${p.recommended === 1 ? 'Cabe tudo num só sábado.' : 'Não cabe numa só tarde — recomendado: 3 sábados.'}${days.length !== p.recommended ? ` <strong>(definidos: ${days.length})</strong>` : ''}</div>
+          ${p.overflow ? `<div class="font-bold text-red-700 mt-1">⚠️ Com os sábados definidos, alguns jogos passam das ${cat.dayEnd}. Acrescenta sábados, campos ou alarga o horário.</div>` : ''}
+        </div>`;
+        },
+
+        // ============================================
+        // SEPARADOR ESCALÕES (admin)
+        // ============================================
+        CATEGORY_COLORS: [
+          ['from-blue-500 to-blue-700', 'Azul'], ['from-pink-500 to-pink-700', 'Rosa'], ['from-red-500 to-red-700', 'Vermelho'],
+          ['from-amber-500 to-amber-700', 'Âmbar'], ['from-yellow-500 to-yellow-700', 'Amarelo'], ['from-indigo-500 to-indigo-700', 'Índigo'],
+          ['from-cyan-500 to-cyan-700', 'Ciano'], ['from-fuchsia-500 to-fuchsia-700', 'Fúcsia'], ['from-lime-500 to-green-700', 'Verde-lima'],
+          ['from-emerald-500 to-emerald-700', 'Esmeralda'], ['from-purple-500 to-purple-700', 'Roxo'], ['from-gray-500 to-gray-700', 'Cinzento']
+        ],
+
+        categoryHasData(catId) {
+          return (this.state.categories[catId] || []).length > 0 || (this.state.matches[catId] || []).length > 0;
+        },
+
+        renderEscaloes() {
+          const all = this.ALL_CATEGORIES || this.CATEGORIES;
+          const sportLabel = s => s === 'padel' ? '🏆 Padel (duplas)' : '🎾 Ténis (individual)';
+          return `
+      <div class="mb-6 flex justify-between items-center flex-wrap gap-3">
+        <div>
+          <h2 class="text-2xl font-extrabold">Escalões e Categorias</h2>
+          <p class="text-sm text-gray-500">Cria e configura os escalões de cada campeonato: modalidade, formato e calendário.</p>
+        </div>
+        <button onclick="app.openCategoryModal()" class="btn-primary text-white px-4 py-2 rounded-lg font-semibold text-sm">➕ Novo escalão</button>
+      </div>
+      ${!this.categoriesTableReady ? `
+        <div class="bg-amber-50 border border-amber-200 text-amber-900 rounded-xl p-4 text-sm mb-4">
+          ⚠️ A tabela <code>categories</code> ainda não existe no Supabase. Corre o <strong>supabase_schema.sql</strong> atualizado no SQL Editor para poderes gravar alterações. Até lá são mostrados os escalões por defeito.
+        </div>` : ''}
+      <div class="grid md:grid-cols-2 gap-4">
+        ${all.map(cat => {
+            const n = (this.state.categories[cat.id] || []).length;
+            const t = this.getTournament(cat.id);
+            return `
+          <div class="bg-white rounded-2xl shadow-sm border overflow-hidden ${cat.active ? '' : 'opacity-60'}">
+            <div class="bg-gradient-to-r ${cat.color} p-4 text-white flex items-center justify-between gap-3">
+              <div class="min-w-0">
+                <div class="text-2xl">${cat.icon}</div>
+                <div class="font-bold truncate">${this.escapeHtml(cat.name)}</div>
+                <div class="text-xs text-white/80">${sportLabel(cat.sport)}${cat.desc ? ' • ' + this.escapeHtml(cat.desc) : ''}</div>
+              </div>
+              <div class="text-right text-xs">
+                <div>${n} inscrito(s)</div>
+                <div>${t.started ? '🟢 Iniciado' : '🟡 Aberto'}</div>
+                ${cat.active ? '' : '<div class="font-bold">Oculto</div>'}
+              </div>
+            </div>
+            <div class="p-4 text-xs text-gray-600 space-y-1">
+              <div><strong>Formato:</strong> ${this.FORMAT_RULES[cat.formatRule] || cat.formatRule}</div>
+              <div><strong>Calendário:</strong> ${this.SCHEDULE_MODES[cat.scheduleMode] || cat.scheduleMode}</div>
+              ${cat.scheduleMode === 'saturday' ? `<div><strong>Sábados:</strong> ${cat.matchDays.length ? cat.matchDays.map(d => this.formatScheduleDate(d)).join(', ') : '<span class="text-red-600">por definir</span>'} • ${cat.dayStart}–${cat.dayEnd} • ${cat.matchMinutes} min • ${cat.courts} campo(s)</div>` : ''}
+              <div class="flex gap-2 pt-2 flex-wrap">
+                <button onclick="app.openCategoryModal('${cat.id}')" class="px-3 py-1.5 btn-admin text-white rounded-lg font-semibold">✏️ Editar</button>
+                <button onclick="app.toggleCategoryActive('${cat.id}')" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg font-semibold">${cat.active ? '🙈 Ocultar' : '👁️ Mostrar'}</button>
+              </div>
+            </div>
+          </div>`;
+          }).join('')}
+      </div>
+      <p class="text-xs text-gray-500 mt-4">Ocultar um escalão não apaga nada: deixa de aparecer no site e nas inscrições. Só é possível ocultar escalões sem inscritos nem jogos.</p>
+    `;
+        },
+
+        openCategoryModal(catId) {
+          const editing = catId ? this.getCategory(catId) : null;
+          const c = editing || this.normalizeCategory({
+            id: '', name: '', icon: '🎾', color: 'from-cyan-500 to-cyan-700', sport: 'tenis',
+            formatRule: 'juvenis', scheduleMode: 'saturday', sortOrder: ((this.ALL_CATEGORIES || []).length + 1) * 10
+          });
+          const locked = editing && this.categoryHasData(catId);
+          const input = (id, label, value, type, extra) => `
+        <div>
+          <label class="block text-xs font-semibold text-gray-700 mb-1">${label}</label>
+          <input id="${id}" type="${type || 'text'}" value="${this.escapeHtml(String(value ?? ''))}" ${extra || ''} class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+        </div>`;
+          this.openGenericModal(`
+      <div class="p-6">
+        <div class="flex justify-between mb-4">
+          <h3 class="text-xl font-bold">${editing ? '✏️ Editar escalão' : '➕ Novo escalão'}</h3>
+          <button onclick="app.closeGenericModal()" class="text-gray-400 text-2xl leading-none">×</button>
+        </div>
+        <div class="space-y-4">
+          <div class="grid sm:grid-cols-2 gap-3">
+            ${input('catName', 'Nome *', c.name, 'text', 'placeholder="Ex.: Juvenis Masculinos"')}
+            ${input('catDesc', 'Descrição', c.desc, 'text', 'placeholder="Ex.: Sub-14"')}
+            <div>
+              <label class="block text-xs font-semibold text-gray-700 mb-1">Modalidade</label>
+              <select id="catSport" ${locked ? 'disabled' : ''} class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+                <option value="tenis" ${c.sport === 'tenis' ? 'selected' : ''}>🎾 Ténis (individual)</option>
+                <option value="padel" ${c.sport === 'padel' ? 'selected' : ''}>🏆 Padel (duplas)</option>
+              </select>
+              ${locked ? '<p class="text-[11px] text-gray-500 mt-1">Já tem inscritos: a modalidade não pode mudar.</p>' : ''}
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              ${input('catIcon', 'Ícone', c.icon, 'text', 'maxlength="4"')}
+              ${input('catOrder', 'Ordem', c.sortOrder, 'number')}
+            </div>
+            <div class="sm:col-span-2">
+              <label class="block text-xs font-semibold text-gray-700 mb-1">Cor</label>
+              <select id="catColor" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+                ${this.CATEGORY_COLORS.map(([v, l]) => `<option value="${v}" ${c.color === v ? 'selected' : ''}>${l}</option>`).join('')}
+                ${this.CATEGORY_COLORS.some(([v]) => v === c.color) ? '' : `<option value="${c.color}" selected>Atual</option>`}
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <div class="text-xs font-bold text-gray-400 uppercase mb-2">Formato do quadro</div>
+            <select id="catFormat" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+              ${Object.entries(this.FORMAT_RULES).map(([k, v]) => `<option value="${k}" ${c.formatRule === k ? 'selected' : ''}>${v}</option>`).join('')}
+            </select>
+            <p class="text-[11px] text-gray-500 mt-1">É a sugestão inicial ao iniciar o torneio — podes sempre ajustar no momento do sorteio.</p>
+          </div>
+
+          <div>
+            <div class="text-xs font-bold text-gray-400 uppercase mb-2">Calendário</div>
+            <select id="catSchedule" onchange="document.getElementById('catSatBlock').classList.toggle('hidden', this.value !== 'saturday')" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+              ${Object.entries(this.SCHEDULE_MODES).map(([k, v]) => `<option value="${k}" ${c.scheduleMode === k ? 'selected' : ''}>${v}</option>`).join('')}
+            </select>
+            <div id="catSatBlock" class="${c.scheduleMode === 'saturday' ? '' : 'hidden'} mt-3 bg-gray-50 border rounded-xl p-3 space-y-3">
+              ${this.saturdayFieldsHTML(c)}
+            </div>
+          </div>
+
+          <div id="catError" class="hidden text-sm text-red-600 font-semibold"></div>
+          <div class="flex gap-2 pt-2">
+            <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">Cancelar</button>
+            <button onclick="app.saveCategory('${editing ? catId : ''}')" class="flex-1 btn-primary text-white px-4 py-2 rounded-lg font-semibold">Guardar</button>
+          </div>
+        </div>
+      </div>
+    `);
+        },
+
+        // Campos dos sábados de jogo (partilhados entre o formulário do escalão e o de datas).
+        saturdayFieldsHTML(c) {
+          const days = [...(c.matchDays || [])];
+          const sugestao = this.nextSaturdays(3);
+          while (days.length < 3) days.push('');
+          return `
+              <div>
+                <label class="block text-xs font-semibold text-gray-700 mb-1">Sábados de jogo (1 a 3)</label>
+                <div class="grid grid-cols-3 gap-2">
+                  ${days.slice(0, 3).map((d, i) => `<input id="satDay${i}" type="date" value="${d}" class="w-full px-2 py-2 border border-gray-200 rounded-lg text-sm">`).join('')}
+                </div>
+                <p class="text-[11px] text-gray-500 mt-1">Deixa vazios os que não precisares. Com poucos inscritos tudo cabe num só sábado; com mais, usa 3. Próximos sábados: ${sugestao.map(d => this.formatScheduleDate(d)).join(', ')}.</p>
+              </div>
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div><label class="block text-xs font-semibold text-gray-700 mb-1">Início</label><input id="satStart" type="time" value="${c.dayStart}" class="w-full px-2 py-2 border border-gray-200 rounded-lg text-sm"></div>
+                <div><label class="block text-xs font-semibold text-gray-700 mb-1">Fim</label><input id="satEnd" type="time" value="${c.dayEnd}" class="w-full px-2 py-2 border border-gray-200 rounded-lg text-sm"></div>
+                <div><label class="block text-xs font-semibold text-gray-700 mb-1">Min/jogo</label><input id="satMinutes" type="number" min="10" max="120" value="${c.matchMinutes}" class="w-full px-2 py-2 border border-gray-200 rounded-lg text-sm"></div>
+                <div><label class="block text-xs font-semibold text-gray-700 mb-1">Campos</label><input id="satCourts" type="number" min="1" max="10" value="${c.courts}" class="w-full px-2 py-2 border border-gray-200 rounded-lg text-sm"></div>
+              </div>`;
+        },
+
+        // Lê e valida os campos dos sábados. Devolve { error } ou os valores.
+        readSaturdayFields() {
+          const matchDays = [0, 1, 2].map(i => document.getElementById(`satDay${i}`)?.value || '').filter(Boolean);
+          const uniq = [...new Set(matchDays)].sort();
+          if (uniq.some(d => !this.isSaturday(d))) return { error: 'Os dias de jogo têm de ser sábados.' };
+          const dayStart = document.getElementById('satStart')?.value || '14:30';
+          const dayEnd = document.getElementById('satEnd')?.value || '19:30';
+          const matchMinutes = parseInt(document.getElementById('satMinutes')?.value) || 20;
+          const courts = parseInt(document.getElementById('satCourts')?.value) || 1;
+          if (this.timeToMin(dayEnd) - this.timeToMin(dayStart) < matchMinutes) return { error: 'O horário tem de dar pelo menos para um jogo.' };
+          return { matchDays: uniq, dayStart, dayEnd, matchMinutes, courts };
+        },
+
+        slugify(s) {
+          return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+        },
+
+        async persistCategory(cat) {
+          if (!this.categoriesTableReady) {
+            throw new Error('A tabela "categories" ainda não existe no Supabase. Corre o supabase_schema.sql atualizado no SQL Editor e tenta de novo.');
+          }
+          const { data, error } = await sb.from('categories').upsert([this.categoryToRow(cat)]).select();
+          if (error) throw error;
+          if (!data || !data.length) throw new Error('O escalão não foi guardado (permissões: confirma que entraste como administrador).');
+        },
+
+        // Recarrega categorias e dados (para que um escalão novo tenha as suas listas).
+        async reloadAfterCategoryChange() {
+          await this.loadData();
+          this.buildTabs();
+          this.render();
+        },
+
+        async saveCategory(catId) {
+          const err = document.getElementById('catError');
+          const fail = m => { err.textContent = m; err.classList.remove('hidden'); };
+          err.classList.add('hidden');
+          const name = document.getElementById('catName').value.trim();
+          if (!name) return fail('Indica o nome do escalão.');
+          const base = catId ? this.getCategory(catId) : null;
+          const sport = base && this.categoryHasData(catId) ? base.sport : document.getElementById('catSport').value;
+          let id = catId;
+          if (!id) {
+            const slug = `${sport}-${this.slugify(name)}`;
+            id = slug; let k = 2;
+            while ((this.ALL_CATEGORIES || []).some(c => c.id === id)) id = `${slug}-${k++}`;
+          }
+          const scheduleMode = document.getElementById('catSchedule').value;
+          let sat = {};
+          if (scheduleMode === 'saturday') {
+            sat = this.readSaturdayFields();
+            if (sat.error) return fail(sat.error);
+          }
+          const cat = this.normalizeCategory({
+            ...(base || {}),
+            id, name, sport,
+            desc: document.getElementById('catDesc').value.trim(),
+            icon: document.getElementById('catIcon').value.trim() || '🎾',
+            color: document.getElementById('catColor').value,
+            sortOrder: parseInt(document.getElementById('catOrder').value) || 100,
+            formatRule: document.getElementById('catFormat').value,
+            scheduleMode,
+            ...sat,
+            active: base ? base.active : true
+          });
+          try {
+            await this.persistCategory(cat);
+            if (scheduleMode === 'saturday' && cat.matchDays.length && !this.getTournament(id).started) {
+              await this.syncSaturdayTournamentDates(id, cat);
+            }
+            this.closeGenericModal();
+            await this.reloadAfterCategoryChange();
+          } catch (e) {
+            console.error(e);
+            fail('Erro ao guardar: ' + (e.message || e));
+          }
+        },
+
+        // No modo sábado, as datas do torneio passam a ser o 1º e o último sábado.
+        async syncSaturdayTournamentDates(catId, cat, capacity) {
+          const t = this.getTournament(catId);
+          const obj = { ...t, startDate: cat.matchDays[0], endDate: cat.matchDays[cat.matchDays.length - 1] };
+          if (capacity) obj.capacity = capacity;
+          await this.saveTournamentToSupabase(catId, obj);
+          this.state.tournaments[catId] = obj;
+        },
+
+        async toggleCategoryActive(catId) {
+          const cat = this.getCategory(catId);
+          if (!cat) return;
+          if (cat.active && this.categoryHasData(catId)) {
+            alert('Este escalão tem inscritos ou jogos. Remove-os primeiro (ou reinicia o torneio) antes de o ocultar.');
+            return;
+          }
+          if (cat.active && !confirm(`Ocultar "${cat.name}"? Deixa de aparecer no site e nas inscrições (não apaga nada).`)) return;
+          try {
+            await this.persistCategory({ ...cat, active: !cat.active });
+            await this.reloadAfterCategoryChange();
+          } catch (e) {
+            alert('Erro: ' + (e.message || e));
+          }
+        },
+
+        // Modal "Datas e Lotação" para escalões com dias de jogo ao sábado.
+        openSaturdayDatesModal(catId) {
+          const cat = this.getCategory(catId);
+          const inscritos = (this.state.categories[catId] || []).length;
+          const n = Math.max(inscritos, 2);
+          this.openGenericModal(`
+      <div class="p-6">
+        <div class="flex justify-between mb-4">
+          <h3 class="text-xl font-bold">📅 Sábados de jogo e Lotação</h3>
+          <button onclick="app.closeGenericModal()" class="text-gray-400 text-2xl leading-none">×</button>
+        </div>
+        <p class="text-sm text-gray-500 mb-4">Categoria: <strong>${cat.icon} ${cat.name}</strong> • ${inscritos} inscrito(s)</p>
+        <div class="space-y-4">
+          ${this.saturdayFieldsHTML(cat)}
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 mb-1">Lotação da categoria</label>
+            <input id="tourCapacity" type="number" min="${Math.max(2, inscritos)}" max="64" value="${Math.max(this.getConfiguredCapacity(catId), inscritos)}" class="w-full px-3 py-2 border border-gray-200 rounded-lg">
+          </div>
+          <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-900">
+            Estimativa com ${n} inscrito(s) e o formato sugerido:
+            ${this.saturdayPreviewHTML(catId, n, this.suggestedConfig(n, catId))}
+            <div class="mt-1">Ao iniciar o torneio, os jogos ficam marcados automaticamente (dia, hora e campo).</div>
+          </div>
+          <div id="tourDatesError" class="hidden text-sm text-red-600 font-semibold"></div>
+          <div class="flex gap-2 pt-2">
+            <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">Cancelar</button>
+            <button onclick="app.saveSaturdayDates('${catId}')" class="flex-1 btn-admin text-white px-4 py-2 rounded-lg font-semibold">Guardar</button>
+          </div>
+        </div>
+      </div>
+    `);
+        },
+
+        async saveSaturdayDates(catId) {
+          const errorEl = document.getElementById('tourDatesError');
+          const fail = msg => { errorEl.textContent = msg; errorEl.classList.remove('hidden'); };
+          errorEl.classList.add('hidden');
+          const sat = this.readSaturdayFields();
+          if (sat.error) return fail(sat.error);
+          if (!sat.matchDays.length) return fail('Indica pelo menos um sábado.');
+          const inscritos = (this.state.categories[catId] || []).length;
+          const capacity = parseInt(document.getElementById('tourCapacity').value);
+          if (!capacity || capacity < 2) return fail('A lotação tem de ser pelo menos 2.');
+          if (capacity < inscritos) return fail(`A lotação não pode ser inferior aos ${inscritos} inscritos.`);
+          const cat = this.normalizeCategory({ ...this.getCategory(catId), ...sat });
+          try {
+            await this.persistCategory(cat);
+            await this.syncSaturdayTournamentDates(catId, cat, capacity);
+            this.closeGenericModal();
+            await this.reloadAfterCategoryChange();
+          } catch (e) {
+            console.error(e);
+            fail('Erro ao guardar: ' + (e.message || e));
+          }
+        },
+
+        // ============================================
         // CARREGAR DADOS DO SUPABASE
         // ============================================
         async loadData() {
+          // Escalões (antes de tudo: as listas por categoria dependem deles)
+          await this.loadCategories();
+
           // Carregar jogadores
           const { data: players, error: playersError } = await sb
             .from('players')
@@ -1272,10 +1833,16 @@
           if (error) throw error;
         },
 
-        async addMatchToSupabase(match, catId) {
+        async addMatchToSupabase(match, catId, withSchedule) {
+          const extra = withSchedule ? {
+            scheduled_date: match.scheduledDate || null,
+            scheduled_time: match.scheduledTime || null,
+            scheduled_location: match.scheduledLocation || null
+          } : {};
           const { data, error } = await sb
             .from('matches')
             .upsert([{
+              ...extra,
               id: match.id,
               cat_id: catId,
               jornada: match.jornada,
@@ -1528,6 +2095,7 @@
           if (this.currentUser.role === 'admin') {
             tabs.push({ id: 'dashboard', label: '📊 Dashboard' });
             tabs.push({ id: 'inscricoes', label: '📝 Inscrições' });
+            tabs.push({ id: 'escaloes', label: '🏷️ Escalões' });
           }
           tabs.push({ id: 'categorias', label: '🏆 Categorias' });
           tabs.push({ id: 'calendario', label: '📅 Calendário' });
@@ -1560,6 +2128,7 @@
             dashboard: () => this.renderDashboard(),
             inscricoes: () => this.renderInscricoes(),
             settings: () => this.renderSettings(),
+            escaloes: () => this.currentUser.role === 'admin' ? this.renderEscaloes() : '',
             categorias: () => this.renderCategorias(),
             calendario: () => this.renderCalendario(),
             classificacao: () => this.renderClassificacao(),
@@ -1855,7 +2424,12 @@
         },
 
         // Configuração sugerida a partir do nº de inscritos (o admin pode sempre mudar).
-        suggestedConfig(nPlayers) {
+        suggestedConfig(nPlayers, catId) {
+          // Escalões jovens: 4 a 6 → grupo único; mais de 6 → 2 grupos (de 4) + meia-final e final.
+          if (catId && this.getCategory(catId)?.formatRule === 'juvenis') {
+            if (nPlayers > 6) return { numGroups: 2, legs: 1, finalType: 'bracket', qualifiersPerGroup: 2, finalLegs: 1 };
+            return { numGroups: 1, legs: 1, finalType: 'none', qualifiersPerGroup: 2, finalLegs: 1 };
+          }
           if (nPlayers > 8) return { numGroups: 2, legs: 1, finalType: 'bracket', qualifiersPerGroup: 2, finalLegs: 1 };
           if (nPlayers <= 5) return { numGroups: 1, legs: 2, finalType: 'none', qualifiersPerGroup: 2, finalLegs: 1 };
           return { numGroups: 1, legs: 1, finalType: 'none', qualifiersPerGroup: 2, finalLegs: 1 };
@@ -2867,7 +3441,7 @@
         isJornadaPast(catId, jornada) {
           const t = this.getTournament(catId);
           if (!t.started) return false;
-          const w = this.computeJornadaWindows(t.startDate, t.endDate, this.jornadasForCategory(catId))[jornada - 1];
+          const w = this.jornadaWindowsFor(catId, this.jornadasForCategory(catId))[jornada - 1];
           if (!w) return false;
           return this.todayStr() > w.endDate;
         },
@@ -2987,7 +3561,7 @@
             ? `<div class="text-[11px] text-amber-700 mt-1">⏳ Proposta: ${this.escapeHtml(this.scheduleText(pending.suggestedDate, pending.suggestedTime, pending.suggestedLocation) || 'a combinar')} — ${pending.authorId === mine ? 'aguarda o adversário' : (mine ? '<strong>aguarda a tua resposta</strong>' : 'por responder')}</div>`
             : '';
           const botoes = [];
-          if (!completed && mine) {
+          if (!completed && mine && !this.isSaturdayMode(catId)) {
             botoes.push(`<button onclick="app.openScheduleModal('${m.id}')" class="px-2.5 py-1 bg-amber-100 hover:bg-amber-200 text-amber-800 rounded-lg text-[11px] font-semibold">📅 Marcação</button>`);
           }
           if (!completed && isAdmin) {
@@ -3028,7 +3602,7 @@
           const cat = this.CATEGORIES.find(c => c.id === catId);
           const opp = match.p1 === mine ? match.p2 : match.p1;
           const t = this.getTournament(catId);
-          const w = this.computeJornadaWindows(t.startDate, t.endDate, this.jornadasForCategory(catId))[match.jornada - 1];
+          const w = this.jornadaWindowsFor(catId, this.jornadasForCategory(catId))[match.jornada - 1];
           const base = counterTo ? (this.state.messages[this.matchChannelId(matchId)] || []).find(x => x.id === counterTo) : null;
           const pre = {
             date: (base && /^\d{4}-/.test(base.suggestedDate || '') ? base.suggestedDate : null) || match.scheduledDate || '',
@@ -3219,20 +3793,23 @@
         renderCalendario() {
           const isAdmin = this.currentUser.role === 'admin';
           const catId = this.currentCategory;
-          const cat = this.CATEGORIES.find(c => c.id === catId);
+          const cat = this.getCategory(catId);
           const t = this.getTournament(catId);
           const started = t.started;
           const nJornadas = this.jornadasForCategory(catId);
-          const windows = this.computeJornadaWindows(t.startDate, t.endDate, nJornadas);
+          const windows = this.jornadaWindowsFor(catId, nJornadas);
           const nInscritos = (this.state.categories[catId] || []).length;
           const tenisCats = this.CATEGORIES.filter(c => c.sport === 'tenis');
           const padelCats = this.CATEGORIES.filter(c => c.sport === 'padel');
           const formato = started
             ? `${t.numGroups > 1 ? t.numGroups + ' grupos' : 'grupo único'} • ${t.legs === 2 ? 'duas mãos' : 'uma mão'}${t.numGroups > 1 && t.finalType !== 'none' ? ' • ' + this.FINAL_TYPES[t.finalType].short : ''}`
             : '';
+          const periodo = this.isSaturdayMode(catId)
+            ? `Sábado(s) ${this.matchDaysFor(catId).map(d => this.formatDatePt(d)).join(', ')} • ${cat.dayStart}–${cat.dayEnd} • jogos de ${cat.matchMinutes} min`
+            : `${this.formatDatePt(t.startDate)} a ${this.formatDatePt(t.endDate)}`;
           const statusText = started
-            ? `🟢 Iniciado • ${this.formatDatePt(t.startDate)} a ${this.formatDatePt(t.endDate)} • ${formato}`
-            : `🟡 Aberto • ${this.formatDatePt(t.startDate)} a ${this.formatDatePt(t.endDate)} • ${nInscritos}/${this.getCapacity(catId)} inscrito(s) • inscrições abertas`;
+            ? `🟢 Iniciado • ${periodo} • ${formato}`
+            : `🟡 Aberto • ${periodo} • ${nInscritos}/${this.getCapacity(catId)} inscrito(s) • inscrições abertas`;
           const finalAction = started ? this.finalPhaseAction(catId) : null;
           return `
       <div class="mb-4 flex justify-between items-center flex-wrap gap-3">
@@ -3285,6 +3862,7 @@
         },
 
         openTournamentDatesModal(catId) {
+          if (this.isSaturdayMode(catId)) return this.openSaturdayDatesModal(catId);
           const cat = this.CATEGORIES.find(c => c.id === catId);
           const t = this.getTournament(catId);
           const start = t?.startDate || this.MOCK_START;
@@ -3300,11 +3878,11 @@
         <div class="space-y-4">
           <div>
             <label class="block text-sm font-semibold text-gray-700 mb-1">Data de início</label>
-            <input id="tourStart" type="date" value="${start}" min="${this.MOCK_START}" max="${this.MOCK_END}" class="w-full px-3 py-2 border border-gray-200 rounded-lg">
+            <input id="tourStart" type="date" value="${start}" class="w-full px-3 py-2 border border-gray-200 rounded-lg">
           </div>
           <div>
             <label class="block text-sm font-semibold text-gray-700 mb-1">Data de fim</label>
-            <input id="tourEnd" type="date" value="${end}" min="${this.MOCK_START}" max="${this.MOCK_END}" class="w-full px-3 py-2 border border-gray-200 rounded-lg">
+            <input id="tourEnd" type="date" value="${end}" class="w-full px-3 py-2 border border-gray-200 rounded-lg">
           </div>
           <div>
             <label class="block text-sm font-semibold text-gray-700 mb-1">Lotação da categoria</label>
@@ -3312,7 +3890,7 @@
             <p class="text-xs text-gray-500 mt-1">Número máximo de inscritos nesta categoria (atualmente ${inscritos} inscrito(s)). Sobe-o quando a procura for maior — com mais de 8 podes jogar a dois grupos.</p>
           </div>
           <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-900">
-            Intervalo máximo: ${this.formatDatePt(this.MOCK_START)} a ${this.formatDatePt(this.MOCK_END)} (${this.mockMaxDays()} dias). As jornadas (todos-contra-todos, conforme o nº de inscritos) são distribuídas com igual duração dentro do intervalo escolhido.
+            Duração máxima: ${this.mockMaxDays()} dias. As jornadas (todos-contra-todos, conforme o nº de inscritos) são distribuídas com igual duração dentro do intervalo escolhido.
           </div>
           <div id="tourDatesError" class="hidden text-sm text-red-600 font-semibold"></div>
           <div class="flex gap-2 pt-2">
@@ -3339,7 +3917,7 @@
           // O mínimo de dias passa a acompanhar as jornadas que o formato atual exige.
           const minDias = Math.max(this.SCHEDULE.length, this.jornadasForCategory(catId));
           if (span < minDias) return fail(`Este formato precisa de pelo menos ${minDias} dias (uma jornada por dia, no mínimo).`);
-          if (span > this.mockMaxDays()) return fail(`O intervalo não pode exceder ${this.mockMaxDays()} dias (${this.formatDatePt(this.MOCK_START)} a ${this.formatDatePt(this.MOCK_END)}).`);
+          if (span > this.mockMaxDays()) return fail(`O intervalo não pode exceder ${this.mockMaxDays()} dias.`);
           let capacity = capacityEl ? parseInt(capacityEl.value) : existing.capacity;
           if (capacityEl) {
             if (!capacity || capacity < 2) return fail('A lotação tem de ser pelo menos 2.');
@@ -3406,6 +3984,12 @@
               'Definir datas', `app.openTournamentDatesModal('${catId}')`));
             return;
           }
+          if (this.isSaturdayMode(catId) && !(this.getCategory(catId).matchDays || []).length) {
+            this.openGenericModal(this.modalErro('Faltam os sábados de jogo',
+              'Define primeiro o(s) sábado(s) em que esta categoria joga.',
+              'Definir sábados', `app.openSaturdayDatesModal('${catId}')`));
+            return;
+          }
           if (players.length < 2) {
             this.openGenericModal(this.modalErro('Inscritos insuficientes',
               `São precisos pelo menos 2 inscritos para iniciar. Esta categoria tem ${players.length}.`,
@@ -3419,7 +4003,7 @@
             ? { ...this.pendingDraw.cfg }
             : t.started
               ? { numGroups: t.numGroups, legs: t.legs, finalType: t.finalType, qualifiersPerGroup: t.qualifiersPerGroup, finalLegs: t.finalLegs }
-              : this.suggestedConfig(n);
+              : this.suggestedConfig(n, catId);
           const canTwoGroups = n >= 4;
           if (!canTwoGroups) cfg.numGroups = 1;
           const radio = (name, value, checked, title, desc, disabled) => `
@@ -3540,7 +4124,8 @@
               ? 'Passa quem somar mais sets nos dois jogos (depois jogos ganhos; persistindo, o melhor classificado nos grupos).'
               : '';
           }
-          const tooLong = plan.totalJornadas > dias;
+          const sabado = this.isSaturdayMode(catId);
+          const tooLong = !sabado && plan.totalJornadas > dias;
           box.className = tooLong
             ? 'bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-800 mb-4'
             : 'bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900 mb-4';
@@ -3549,7 +4134,7 @@
         <div>• ${groupsTxt} • ${plan.legs === 2 ? 'duas mãos' : 'uma mão'}</div>
         <div>• Fase de grupos: <strong>${plan.groupMatches}</strong> jogo(s) em <strong>${plan.groupJornadas}</strong> jornada(s)</div>
         ${finalTxt ? `<div>• ${finalTxt}</div>` : ''}
-        <div class="mt-1">• Total: <strong>${plan.totalJornadas}</strong> jornada(s) distribuídas por ${dias} dias (${this.formatDatePt(t.startDate)} a ${this.formatDatePt(t.endDate)})</div>
+        ${sabado ? this.saturdayPreviewHTML(catId, n, cfg) : `<div class="mt-1">• Total: <strong>${plan.totalJornadas}</strong> jornada(s) distribuídas por ${dias} dias (${this.formatDatePt(t.startDate)} a ${this.formatDatePt(t.endDate)})</div>`}
         ${tooLong ? `<div class="mt-1 font-bold">⚠️ O intervalo de datas é curto para ${plan.totalJornadas} jornadas. Alarga as datas antes de iniciar.</div>` : ''}
       `;
         },
@@ -3571,7 +4156,7 @@
             return fail(`Não podes apurar ${cfg.qualifiersPerGroup} de cada grupo: o grupo mais pequeno só tem ${minSize} participantes.`);
           }
           const dias = this.daysBetween(t.startDate, t.endDate);
-          if (plan.totalJornadas > dias) {
+          if (!this.isSaturdayMode(catId) && plan.totalJornadas > dias) {
             return fail(`Este formato precisa de ${plan.totalJornadas} jornadas e o intervalo escolhido só tem ${dias} dias. Alarga as datas primeiro.`);
           }
           this.pendingDraw = { catId, cfg, plan };
@@ -3591,7 +4176,9 @@
           ${linha('Grupos', plan.numGroups === 1 ? 'Grupo único' : plan.sizes.map((sz, k) => `${this.groupName(k)}: ${sz}`).join(' • '))}
           ${linha('Fase de grupos', `${plan.legs === 2 ? 'Duas mãos' : 'Uma mão'} • ${plan.groupMatches} jogos`)}
           ${linha('Fase final', finalDesc)}
-          ${linha('Jornadas', `${plan.totalJornadas} (${this.formatDatePt(t.startDate)} a ${this.formatDatePt(t.endDate)})`)}
+          ${this.isSaturdayMode(catId)
+            ? linha('Sábados', `${this.matchDaysFor(catId).map(d => this.formatScheduleDate(d)).join(', ')} • jogos de ${this.getCategory(catId).matchMinutes} min, marcados automaticamente`)
+            : linha('Jornadas', `${plan.totalJornadas} (${this.formatDatePt(t.startDate)} a ${this.formatDatePt(t.endDate)})`)}
         </div>
         ${t.started ? `
           <div class="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-800 mb-4">
@@ -3629,10 +4216,12 @@
               });
             }
             matches = matches.map((m, k) => ({ ...m, id: `${catId}-m${k}` }));
+            const sabado = this.isSaturdayMode(catId);
+            if (sabado) this.autoScheduleMatches(catId, matches, plan.totalJornadas);
             // Substituir os jogos DESTA categoria (nunca toca nas outras categorias).
             await sb.from('matches').delete().eq('cat_id', catId);
             await this.deleteMatchChats(catId);
-            for (const m of matches) await this.addMatchToSupabase(m, catId);
+            for (const m of matches) await this.addMatchToSupabase(m, catId, sabado);
             this.state.matches[catId] = matches;
             const obj = {
               ...t,
@@ -4027,7 +4616,9 @@
             }
 
             if (!newMatches.length) throw new Error('Não foi possível apurar os jogos da fase final.');
-            for (const m of newMatches) await this.addMatchToSupabase(m, catId);
+            const sabado = this.isSaturdayMode(catId);
+            if (sabado) this.autoScheduleMatches(catId, newMatches, t.plannedJornadas || this.jornadasForCategory(catId), { afterExisting: true });
+            for (const m of newMatches) await this.addMatchToSupabase(m, catId, sabado);
             this.state.matches[catId] = [...(this.state.matches[catId] || []), ...newMatches];
             await this.saveTournamentToSupabase(catId, obj);
             this.state.tournaments[catId] = obj;
@@ -4474,6 +5065,8 @@
           this.markAsRead(this.currentChatChannel);
           const messages = this.state.messages[this.currentChatChannel] || [];
           const isAdmin = this.currentUser.role === 'admin';
+          if (!this.chatSelected) this.chatSelected = new Set();
+          const totalUnread = channels.reduce((t, ch) => t + (ch.id === this.currentChatChannel ? 0 : this.getUnreadCount(ch.id)), 0);
           const channelMatch = currentChannel.matchId ? this.findMatch(currentChannel.matchId) : null;
           const channelMatchOpen = channelMatch && !this.isMatchComplete(channelMatch.match);
           const isCategoryChannel = this.CATEGORIES.some(c => c.id === this.currentChatChannel);
@@ -4500,13 +5093,29 @@
       <div class="grid lg:grid-cols-4 gap-4" style="height: calc(100vh - 280px); min-height: 500px;">
         <div class="lg:col-span-1 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col">
           <div class="p-3 border-b border-gray-100 bg-gradient-to-r from-indigo-50 to-purple-50">
-            <div class="text-xs font-bold text-gray-700 uppercase tracking-wide">Canais</div>
+            <div class="flex items-center justify-between gap-2">
+              <div class="text-xs font-bold text-gray-700 uppercase tracking-wide">Canais</div>
+              ${totalUnread > 0 || this.chatSelectMode ? `
+                <div class="flex gap-1">
+                  <button onclick="app.toggleChatSelectMode()" class="px-2 py-0.5 rounded text-[10px] font-semibold ${this.chatSelectMode ? 'bg-gray-700 text-white' : 'bg-white hover:bg-gray-100 text-gray-700 border'}">${this.chatSelectMode ? 'Cancelar' : '☑️ Selecionar'}</button>
+                  ${this.chatSelectMode ? '' : `<button onclick="app.markAllChatsRead()" class="px-2 py-0.5 rounded text-[10px] font-semibold bg-indigo-600 hover:bg-indigo-700 text-white">✓ Tudo lido</button>`}
+                </div>` : ''}
+            </div>
+            ${this.chatSelectMode ? `
+              <div class="flex items-center justify-between gap-2 mt-2">
+                <span class="text-[10px] text-gray-600">${this.chatSelected.size} selecionado(s)</span>
+                <button onclick="app.markSelectedChatsRead()" ${this.chatSelected.size ? '' : 'disabled'} class="px-2 py-0.5 rounded text-[10px] font-semibold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-40">✓ Marcar selecionados como lidos</button>
+              </div>` : ''}
           </div>
           <div class="flex-1 overflow-y-auto scrollbar-thin p-2 space-y-1">
             ${channels.map(ch => {
             const unread = this.getUnreadCount(ch.id);
             const isActive = ch.id === this.currentChatChannel;
+            const caixa = this.chatSelectMode && unread > 0 && !isActive
+              ? `<input type="checkbox" ${this.chatSelected.has(ch.id) ? 'checked' : ''} onchange="app.toggleChatSelected('${ch.id}')" class="w-4 h-4 flex-shrink-0 accent-indigo-600">`
+              : (this.chatSelectMode ? '<span class="w-4 flex-shrink-0"></span>' : '');
             return `
+                <div class="flex items-center gap-1.5">${caixa}
                 <button onclick="app.switchChatChannel('${ch.id}')" class="w-full text-left p-2.5 rounded-lg transition ${isActive ? 'bg-gradient-to-r ' + ch.color + ' text-white shadow-md' : 'hover:bg-gray-50 text-gray-700'}">
                   <div class="flex items-center gap-2">
                     <span class="text-lg">${ch.icon}</span>
@@ -4517,6 +5126,7 @@
                     ${unread > 0 && !isActive ? `<span class="unread-badge">${unread > 9 ? '9+' : unread}</span>` : ''}
                   </div>
                 </button>
+                </div>
               `;
           }).join('')}
           </div>
@@ -4658,6 +5268,34 @@
         getTotalUnread() {
           if (!this.currentUser) return 0;
           return this.chatChannels().reduce((total, ch) => total + this.getUnreadCount(ch.id), 0);
+        },
+
+        // Notificações: marcar todos os canais (ou só os selecionados) como lidos.
+        toggleChatSelectMode() {
+          this.chatSelectMode = !this.chatSelectMode;
+          this.chatSelected = new Set();
+          this.render();
+        },
+        toggleChatSelected(channelId) {
+          if (!this.chatSelected) this.chatSelected = new Set();
+          if (this.chatSelected.has(channelId)) this.chatSelected.delete(channelId);
+          else this.chatSelected.add(channelId);
+          this.render();
+        },
+        markChannelsRead(ids) {
+          const userId = this.currentUser?.playerId || 'admin';
+          const now = Date.now();
+          ids.forEach(id => { this.readMarks()[`${userId}_${id}`] = now; });
+          try { localStorage.setItem('emtpRead_v1', JSON.stringify(this.state.readMessages)); } catch (e) { }
+          this.chatSelectMode = false;
+          this.chatSelected = new Set();
+          this.render();
+        },
+        markAllChatsRead() {
+          this.markChannelsRead(this.chatChannels().map(ch => ch.id));
+        },
+        markSelectedChatsRead() {
+          this.markChannelsRead([...(this.chatSelected || [])]);
         },
 
         markAsRead(channelId) {
@@ -6419,7 +7057,7 @@
             <img src="https://image.qwenlm.ai/public_source/6e39fa4b-aff8-48f2-96e9-97740c436264/16780e44e-f071-4e64-8673-649738223400.png" alt="EMTP" class="h-16 w-16 bg-white rounded-lg p-1">
             <div>
               <h2 class="text-3xl font-extrabold">📖 Regulamento Oficial</h2>
-              <p class="text-sm text-white/90 mt-1">EMTP • Oliveira do Bairro • 2026</p>
+              <p class="text-sm text-white/90 mt-1">EMTP • Oliveira do Bairro</p>
             </div>
           </div>
         </div>
@@ -6458,6 +7096,14 @@
               <h3 class="text-xl font-extrabold">Desempate</h3>
             </div>
             <p>Confronto direto → Δ Sets → Δ Jogos → Sorteio</p>
+          </div>
+          <div class="regulamento-section pl-5">
+            <div class="flex items-center gap-3 mb-3">
+              <div class="regulamento-number">6</div>
+              <h3 class="text-xl font-extrabold">Escalões Jovens (Juvenis e Mini-Ténis)</h3>
+            </div>
+            <p>Com 4 a 6 inscritos joga-se num grupo único (todos-contra-todos). Com mais de 6, dois grupos de 4, seguidos de meia-final e final.</p>
+            <p class="mt-2">Os jogos têm 20 minutos e realizam-se ao sábado à tarde — num só sábado ou em 3 sábados, conforme o número de inscritos. Dia, hora e campo de cada jogo são marcados pela organização.</p>
           </div>
         </div>
       </div>

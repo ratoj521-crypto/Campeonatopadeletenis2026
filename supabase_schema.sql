@@ -154,6 +154,28 @@ alter table tournaments add column if not exists final_started boolean not null 
 alter table tournaments add column if not exists planned_jornadas int;                          -- total de jornadas previstas (grupos + fase final)
 alter table tournaments add column if not exists capacity int;                                  -- lotação da categoria (null = valor por defeito da app)
 
+-- Escalões / categorias configuráveis pelo admin (acrescentado; idempotente).
+-- A app tem uma lista de categorias por defeito; as linhas desta tabela sobrepõem-se
+-- a essa lista (editar, criar novos escalões, ocultar). Tabela vazia = comportamento antigo.
+create table if not exists categories (
+  id text primary key,                         -- igual ao cat_id usado em players/matches/tournaments
+  name text not null,
+  description text,
+  icon text,
+  color text,                                  -- classes Tailwind do gradiente
+  sport text not null default 'tenis',         -- 'tenis' (individual) | 'padel' (duplas)
+  sort_order int not null default 100,
+  active boolean not null default true,        -- false = oculto (nada é apagado)
+  format_rule text not null default 'standard',-- 'standard' | 'juvenis'
+  schedule_mode text not null default 'weekly',-- 'weekly' | 'saturday'
+  match_days jsonb,                            -- ["YYYY-MM-DD", ...] sábados de jogo
+  day_start text default '14:30',
+  day_end text default '19:30',
+  match_minutes int default 20,
+  courts int default 2,
+  updated_at timestamptz not null default now()
+);
+
 -- Perfis ligados ao Supabase Auth (usado para saber quem é admin)
 create table if not exists profiles (
   id uuid primary key references auth.users(id) on delete cascade,
@@ -176,6 +198,7 @@ alter table playoffs enable row level security;
 alter table profiles enable row level security;
 alter table tournaments enable row level security;
 alter table accounts enable row level security;
+alter table categories enable row level security;
 
 -- profiles: qualquer utilizador autenticado só lê o seu próprio perfil
 drop policy if exists "read own profile" on profiles;
@@ -266,6 +289,16 @@ create policy "public read tournaments" on tournaments for select using (true);
 create policy "admin write tournaments" on tournaments for insert with check (is_admin());
 create policy "admin update tournaments" on tournaments for update using (is_admin());
 create policy "admin delete tournaments" on tournaments for delete using (is_admin());
+
+-- categories: leitura pública, escrita só admin.
+drop policy if exists "public read categories" on categories;
+drop policy if exists "admin write categories" on categories;
+drop policy if exists "admin update categories" on categories;
+drop policy if exists "admin delete categories" on categories;
+create policy "public read categories" on categories for select using (true);
+create policy "admin write categories" on categories for insert with check (is_admin());
+create policy "admin update categories" on categories for update using (is_admin());
+create policy "admin delete categories" on categories for delete using (is_admin());
 
 -- accounts: leitura/criação/atualização públicas (registo feito pelo próprio,
 -- sem sessão Supabase). Apagar contas é só admin. As contas persistem ao reiniciar.
