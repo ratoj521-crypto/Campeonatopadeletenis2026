@@ -222,6 +222,12 @@
         word-wrap: break-word;
       }
 
+      /* Mensagens normais: o limite de largura fica no contentor (a bolha cresce na horizontal
+         até 75% da conversa, em vez de colapsar para a largura de uma letra). */
+      .msg-col { max-width: 75%; min-width: 0; }
+      .msg-col .msg-bubble { max-width: 100%; width: fit-content; overflow-wrap: anywhere; }
+      .msg-mine .msg-col .msg-bubble { margin-left: auto; }
+
       .msg-mine .msg-bubble {
         background: linear-gradient(135deg, #6366f1, #8b5cf6);
         color: white;
@@ -335,6 +341,16 @@
         50% {
           opacity: 0.3;
         }
+      }
+      /* Chat: no computador fica como estava; no telemóvel, canais OU conversa em ecrã inteiro. */
+      @media (min-width: 1024px) {
+        .chat-grid { height: calc(100vh - 280px); min-height: 500px; }
+      }
+      @media (max-width: 1023px) {
+        .chat-mobile-full { position: fixed; inset: 0; z-index: 60; height: 100vh; height: 100dvh; border-radius: 0 !important; }
+        body.chat-open #content { animation: none !important; transform: none !important; }
+        body.chat-open .sync-indicator { display: none !important; }
+        body.chat-open { overflow: hidden; }
       }
     </style>
   </head>
@@ -1662,7 +1678,9 @@
         // Atualiza o ecrã depois de chegar/mudar uma mensagem por realtime.
         onMessagesChanged(channel, scrollToEnd) {
           if (!this.currentUser) return;
-          if (this.currentTab === 'chat' && this.currentChatChannel === channel) {
+          if (this.currentTab === 'chat' && this.isMobileChatList()) {
+            this.render();   // atualiza os contadores da lista de canais
+          } else if (this.currentTab === 'chat' && this.currentChatChannel === channel) {
             this.markAsRead(channel);
             this.renderChatMessages();
             if (scrollToEnd) {
@@ -2111,6 +2129,7 @@
         },
 
         switchTab(tab) {
+          if (tab === 'chat') this.chatMobileView = 'list';
           this.currentTab = tab;
           document.querySelectorAll('.tab-btn').forEach(b => {
             b.classList.remove('tab-active');
@@ -2137,6 +2156,7 @@
             chat: () => this.renderChat(),
             regulamento: () => this.renderRegulamento()
           };
+          document.body.classList.toggle('chat-open', this.currentTab === 'chat' && this.chatMobileView === 'chat');
           content.innerHTML = (renderers[this.currentTab] || (() => '<div>Em construção</div>'))();
           this.updateChatBadge();
         },
@@ -3585,6 +3605,7 @@
           this.currentChatChannel = this.matchChannelId(matchId);
           this.markAsRead(this.currentChatChannel);
           this.switchTab('chat');
+          this.openChatConversationView();
           setTimeout(() => {
             const container = document.getElementById('chatMessages');
             if (container) container.scrollTop = container.scrollHeight;
@@ -5062,11 +5083,14 @@
           const channels = this.chatChannels();
           const currentChannel = channels.find(ch => ch.id === this.currentChatChannel) || channels[0];
           if (currentChannel.id !== this.currentChatChannel) this.currentChatChannel = currentChannel.id;
-          this.markAsRead(this.currentChatChannel);
+          // Telemóvel: 'list' mostra só os canais; 'chat' mostra só a conversa (ecrã inteiro).
+          const mobileList = this.isMobileChatList();
+          const mobileView = this.chatMobileView === 'chat' ? 'chat' : 'list';
+          if (!mobileList) this.markAsRead(this.currentChatChannel);
           const messages = this.state.messages[this.currentChatChannel] || [];
           const isAdmin = this.currentUser.role === 'admin';
           if (!this.chatSelected) this.chatSelected = new Set();
-          const totalUnread = channels.reduce((t, ch) => t + (ch.id === this.currentChatChannel ? 0 : this.getUnreadCount(ch.id)), 0);
+          const totalUnread = channels.reduce((t, ch) => t + (ch.id === this.currentChatChannel && !mobileList ? 0 : this.getUnreadCount(ch.id)), 0);
           const channelMatch = currentChannel.matchId ? this.findMatch(currentChannel.matchId) : null;
           const channelMatchOpen = channelMatch && !this.isMatchComplete(channelMatch.match);
           const isCategoryChannel = this.CATEGORIES.some(c => c.id === this.currentChatChannel);
@@ -5090,8 +5114,8 @@
           </div>
         </div>
       </div>
-      <div class="grid lg:grid-cols-4 gap-4" style="height: calc(100vh - 280px); min-height: 500px;">
-        <div class="lg:col-span-1 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col">
+      <div class="chat-grid grid lg:grid-cols-4 gap-4">
+        <div class="${mobileView === 'chat' ? 'hidden lg:flex' : 'flex'} lg:col-span-1 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex-col">
           <div class="p-3 border-b border-gray-100 bg-gradient-to-r from-indigo-50 to-purple-50">
             <div class="flex items-center justify-between gap-2">
               <div class="text-xs font-bold text-gray-700 uppercase tracking-wide">Canais</div>
@@ -5110,7 +5134,7 @@
           <div class="flex-1 overflow-y-auto scrollbar-thin p-2 space-y-1">
             ${channels.map(ch => {
             const unread = this.getUnreadCount(ch.id);
-            const isActive = ch.id === this.currentChatChannel;
+            const isActive = ch.id === this.currentChatChannel && !mobileList;
             const caixa = this.chatSelectMode && unread > 0 && !isActive
               ? `<input type="checkbox" ${this.chatSelected.has(ch.id) ? 'checked' : ''} onchange="app.toggleChatSelected('${ch.id}')" class="w-4 h-4 flex-shrink-0 accent-indigo-600">`
               : (this.chatSelectMode ? '<span class="w-4 flex-shrink-0"></span>' : '');
@@ -5131,10 +5155,11 @@
           }).join('')}
           </div>
         </div>
-        <div class="lg:col-span-3 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col">
+        <div class="${mobileView === 'chat' ? 'flex chat-mobile-full lg:static lg:h-auto' : 'hidden lg:flex'} lg:col-span-3 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex-col">
           <div class="p-4 border-b border-gray-100 bg-gradient-to-r ${currentChannel.color} text-white">
+            <button onclick="app.backToChatChannels()" class="lg:hidden mb-2 -mt-1 inline-flex items-center gap-1 px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-lg text-sm font-semibold">← Canais</button>
             <div class="flex items-center justify-between">
-              <div class="flex items-center gap-3">
+              <div class="flex items-center gap-3 min-w-0">
                 <div class="text-2xl">${currentChannel.icon}</div>
                 <div>
                   <div class="font-bold text-lg">${currentChannel.name}</div>
@@ -5216,7 +5241,7 @@
             return `<div class="chat-message msg-reschedule mb-3"><div class="msg-bubble"><div class="flex items-center gap-2 mb-2"><span class="text-sm">📅</span><span class="font-bold text-xs uppercase">Proposta de Marcação</span><span class="text-[10px] opacity-70 ml-auto">${time}</span></div><div class="text-sm mb-2">${this.escapeHtml(msg.text)}</div><div class="reschedule-card ${responseClass}"><div class="text-xs mb-1">📅 <strong>Dia:</strong> ${this.escapeHtml(this.formatScheduleDate(msg.suggestedDate) || 'A combinar')}</div><div class="text-xs">⏰ <strong>Hora:</strong> ${this.escapeHtml(msg.suggestedTime || 'A combinar')}</div>${msg.suggestedLocation ? `<div class="text-xs mt-1">📍 <strong>Local:</strong> ${this.escapeHtml(msg.suggestedLocation)}</div>` : ''}${acoes}</div><div class="text-[10px] opacity-70 mt-2">— ${authorName}</div></div></div>`;
           }
           const avatarColor = isAdminMsg ? 'admin-badge' : 'profile-badge';
-          return `<div class="chat-message ${isMine ? 'msg-mine' : 'msg-other'} mb-3"><div class="flex ${isMine ? 'flex-row-reverse' : 'flex-row'} gap-2 items-end"><div class="msg-avatar ${avatarColor}">${authorName.charAt(0).toUpperCase()}</div><div>${!isMine ? `<div class="text-[10px] text-gray-500 mb-0.5"><strong>${authorName}</strong> ${isAdminMsg ? '👑' : ''}</div>` : ''}<div class="msg-bubble"><div class="text-sm">${this.escapeHtml(msg.text)}</div></div><div class="text-[10px] text-gray-400 mt-0.5 ${isMine ? 'text-right' : ''}">${time}</div></div></div></div>`;
+          return `<div class="chat-message ${isMine ? 'msg-mine' : 'msg-other'} mb-3"><div class="flex ${isMine ? 'flex-row-reverse' : 'flex-row'} gap-2 items-end"><div class="msg-avatar ${avatarColor}">${authorName.charAt(0).toUpperCase()}</div><div class="msg-col">${!isMine ? `<div class="text-[10px] text-gray-500 mb-0.5"><strong>${authorName}</strong> ${isAdminMsg ? '👑' : ''}</div>` : ''}<div class="msg-bubble"><div class="text-sm">${this.escapeHtml(msg.text)}</div></div><div class="text-[10px] text-gray-400 mt-0.5 ${isMine ? 'text-right' : ''}">${time}</div></div></div></div>`;
         },
 
         escapeHtml(text) {
@@ -5237,7 +5262,24 @@
           container.scrollTop = container.scrollHeight;
         },
 
+        // Telemóvel (ecrã < 1024px) com a lista de canais à vista.
+        isMobileChatList() {
+          return this.chatMobileView !== 'chat' && window.matchMedia('(max-width: 1023px)').matches;
+        },
+        openChatConversationView() {
+          if (this.chatMobileView === 'chat') return;
+          this.chatMobileView = 'chat';
+          this.markAsRead(this.currentChatChannel);
+          this.render();
+        },
+        backToChatChannels() {
+          this.chatMobileView = 'list';
+          this.render();
+          window.scrollTo(0, 0);
+        },
+
         switchChatChannel(channelId) {
+          this.chatMobileView = 'chat';
           this.currentChatChannel = channelId;
           this.markAsRead(channelId);
           this.render();
@@ -6877,6 +6919,7 @@
             // Leva o atleta ao canal privado com os admins para continuar a conversa.
             this.currentChatChannel = dmChannel;
             this.switchTab('chat');
+            this.openChatConversationView();
             alert('Contestação enviada em mensagem privada aos admins. Podes continuar a conversa no canal 🔒 Admins.');
           } catch (error) {
             console.error('Erro:', error);
