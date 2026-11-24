@@ -1466,19 +1466,19 @@
           const cat = this.getCategory(catId);
           if (!cat) return;
           if (cat.active && this.categoryHasData(catId)) {
-            alert('Este escalão tem inscritos ou jogos. Remove-os primeiro (ou reinicia o torneio) antes de o ocultar.');
+            app.notify('Este escalão tem inscritos ou jogos. Remove-os primeiro (ou reinicia o torneio) antes de o ocultar.');
             return;
           }
           if (cat.active && this.hasDivisions(catId)) {
-            alert('Este escalão tem divisões ativas: é através dele que os atletas se inscrevem (e são encaminhados para a sua divisão). Oculta primeiro as divisões, se as quiseres desativar.');
+            app.notify('Este escalão tem divisões ativas: é através dele que os atletas se inscrevem (e são encaminhados para a sua divisão). Oculta primeiro as divisões, se as quiseres desativar.');
             return;
           }
-          if (cat.active && !confirm(`Ocultar "${cat.name}"? Deixa de aparecer no site e nas inscrições (não apaga nada).`)) return;
+          if (cat.active && !await app.ask(`Ocultar "${cat.name}"? Deixa de aparecer no site e nas inscrições (não apaga nada).`, { title: 'Ocultar escalão', okLabel: 'Ocultar', icon: '🙈' })) return;
           try {
             await this.persistCategory({ ...cat, active: !cat.active });
             await this.reloadAfterCategoryChange();
           } catch (e) {
-            alert('Erro: ' + (e.message || e));
+            app.notify('Erro: ' + (e.message || e));
           }
         },
 
@@ -3428,7 +3428,7 @@
         async removeAccount(email) {
           const e = (email || '').toLowerCase();
           const acc = this.state.accounts[e];
-          if (!confirm(`Apagar o utilizador "${acc?.name || email}" (${email})?\n\nIsto remove a conta, o login e todas as participações em torneios. Irreversível.`)) return;
+          if (!await app.ask(`Apagar o utilizador "${acc?.name || email}" (${email})?\n\nIsto remove a conta, o login e todas as participações em torneios. Irreversível.`, { title: 'Apagar utilizador', okLabel: 'Apagar', icon: '🗑️' })) return;
           try {
             const { error } = await sb.rpc('admin_delete_account', { p_email: e });
             if (error) throw error;
@@ -3440,10 +3440,10 @@
             });
             this.render();
             this.renderVacanciesOverview();
-            alert('Utilizador removido.');
+            app.notify('Utilizador removido.');
           } catch (error) {
             console.error('Erro:', error);
-            alert('Erro ao remover utilizador: ' + (error.message || error));
+            app.notify('Erro ao remover utilizador: ' + (error.message || error));
           }
         },
 
@@ -3686,7 +3686,7 @@
           if (this.currentUser?.role !== 'admin') return;
           const atletas = this.inscritosPorPessoa();
           const formularios = this.state.inscriptions;
-          if (!atletas.length && !formularios.length) { alert('Não há inscrições para exportar.'); return; }
+          if (!atletas.length && !formularios.length) { app.notify('Não há inscrições para exportar.'); return; }
           const wb = XLSX.utils.book_new();
 
           if (atletas.length) {
@@ -3994,7 +3994,7 @@
               return;
             }
             this.closeGenericModal();
-            alert('Password alterada com sucesso!');
+            app.notify('Password alterada com sucesso!');
           } catch (error) {
             console.error('Erro:', error);
             errorEl.textContent = 'Erro ao alterar password.';
@@ -4056,7 +4056,7 @@
           try {
             await this.adminResetLogin(email, newPassword);
             this.closeGenericModal();
-            alert('Password reposta com sucesso!');
+            app.notify('Password reposta com sucesso!');
           } catch (error) {
             console.error('Erro:', error);
             errorEl.textContent = 'Erro ao repor password: ' + (error.message || error);
@@ -4375,8 +4375,8 @@
           if (!found) return;
           const { catId, match } = found;
           const mine = this.myIdInMatch(match);
-          if (!mine) { alert('Só podes marcar os teus jogos.'); return; }
-          if (this.isMatchComplete(match)) { alert('Este jogo já foi realizado.'); return; }
+          if (!mine) { app.notify('Só podes marcar os teus jogos.'); return; }
+          if (this.isMatchComplete(match)) { app.notify('Este jogo já foi realizado.'); return; }
           const cat = this.CATEGORIES.find(c => c.id === catId);
           const opp = match.p1 === mine ? match.p2 : match.p1;
           const t = this.getTournament(catId);
@@ -4708,7 +4708,7 @@
             this.state.tournaments[catId] = obj;
             this.closeGenericModal();
             this.render();
-            alert('Datas e lotação guardadas!' + (obj.started ? '' : ' Podes agora iniciar o torneio.'));
+            app.notify('Datas e lotação guardadas!' + (obj.started ? '' : ' Podes agora iniciar o torneio.'));
           } catch (error) {
             console.error('Erro:', error);
             fail('Erro ao guardar datas: ' + (error.message || error));
@@ -5083,7 +5083,7 @@
         async reopenTournament(catId) {
           const cat = this.CATEGORIES.find(c => c.id === catId);
           const t = this.getTournament(catId);
-          if (!confirm(`Reiniciar o torneio de ${cat.name}?\n\n• Volta ao estado ABERTO.\n• Os jogos e resultados atuais são apagados.\n• As inscrições mantêm-se (podes alterar as datas e iniciar de novo).`)) return;
+          if (!await app.ask(`Reiniciar o torneio de ${cat.name}?\n\n• Volta ao estado ABERTO.\n• Os jogos e resultados atuais são apagados.\n• As inscrições mantêm-se (podes alterar as datas e iniciar de novo).`, { title: 'Reiniciar torneio', okLabel: 'Reiniciar', icon: '🔄' })) return;
           try {
             await sb.from('matches').delete().eq('cat_id', catId);
             await this.deleteMatchChats(catId);
@@ -5096,10 +5096,10 @@
             await this.saveTournamentToSupabase(catId, obj);
             this.state.tournaments[catId] = obj;
             this.render();
-            alert(`Torneio de ${cat.name} reaberto. Podes alterar as datas e iniciar novamente.`);
+            app.notify(`Torneio de ${cat.name} reaberto. Podes alterar as datas e iniciar novamente.`);
           } catch (error) {
             console.error('Erro:', error);
-            alert('Erro ao reiniciar o torneio: ' + (error.message || error));
+            app.notify('Erro ao reiniciar o torneio: ' + (error.message || error));
           }
         },
 
@@ -6142,7 +6142,7 @@
             // O realtime vai atualizar automaticamente
           } catch (error) {
             console.error('Erro ao enviar mensagem:', error);
-            alert('Erro ao enviar mensagem. Tenta novamente.');
+            app.notify('Erro ao enviar mensagem. Tenta novamente.');
           }
         },
 
@@ -6156,7 +6156,7 @@
             if (found) {
               const { catId, match } = found;
               const mine = this.myIdInMatch(match);
-              if (!mine || mine === msg.authorId) { alert('Só o adversário pode responder a esta proposta.'); return; }
+              if (!mine || mine === msg.authorId) { app.notify('Só o adversário pode responder a esta proposta.'); return; }
               if (response === 'accepted') {
                 await this.saveMatchSchedule(match, msg.suggestedDate, msg.suggestedTime, msg.suggestedLocation);
               }
@@ -6173,7 +6173,7 @@
             this.render();
           } catch (error) {
             console.error('Erro:', error);
-            alert('Erro ao responder: ' + (error.message || error));
+            app.notify('Erro ao responder: ' + (error.message || error));
           }
         },
 
@@ -6185,7 +6185,7 @@
             .filter(m => !this.isMatchComplete(m) && (isAdmin || this.myIdInMatch(m)))
             .sort((a, b) => a.jornada - b.jornada);
           if (!jogos.length) {
-            alert(isAdmin ? 'Não há jogos por realizar nesta categoria.' : 'Não tens jogos por realizar nesta categoria.');
+            app.notify(isAdmin ? 'Não há jogos por realizar nesta categoria.' : 'Não tens jogos por realizar nesta categoria.');
             return;
           }
           this.openGenericModal(`
@@ -6239,7 +6239,7 @@
 
         async submitAnnouncement() {
           const text = document.getElementById('announcementText').value.trim();
-          if (!text) { alert('Escreve o anúncio'); return; }
+          if (!text) { app.notify('Escreve o anúncio'); return; }
           await this.sendMessage(this.currentChatChannel, text, 'announcement');
           this.closeGenericModal();
         },
@@ -6554,11 +6554,11 @@
           const email = document.getElementById(`${prefix}Email`).value.trim();
           const address = document.getElementById(`${prefix}Address`).value.trim();
           if (!name || !nif || !phone || !email || !address) {
-            alert(`⚠️ Preenche todos os dados de: ${label}`);
+            app.notify(`⚠️ Preenche todos os dados de: ${label}`);
             return null;
           }
           if (!/^\S+@\S+\.\S+$/.test(email)) {
-            alert(`⚠️ Email inválido em: ${label}`);
+            app.notify(`⚠️ Email inválido em: ${label}`);
             return null;
           }
           return { name, nif, phone, email, address };
@@ -6599,7 +6599,7 @@
           const selectedCats = Array.from(document.querySelectorAll('input[name="inscCategory"]:checked')).map(el => el.value);
           const accept = document.getElementById('inscAccept').checked;
 
-          if (selectedCats.length === 0) { alert('⚠️ Seleciona ' + (isPadel ? 'pelo menos uma categoria' : 'uma categoria')); return; }
+          if (selectedCats.length === 0) { app.notify('⚠️ Seleciona ' + (isPadel ? 'pelo menos uma categoria' : 'uma categoria')); return; }
 
           const p1 = this.collectPlayerData('p1', isPadel ? '1º Jogador' : 'Jogador');
           if (!p1) return;
@@ -6608,10 +6608,10 @@
           if (isPadel) {
             p2 = this.collectPlayerData('p2', '2º Jogador');
             if (!p2) return;
-            if (p1.email.toLowerCase() === p2.email.toLowerCase()) { alert('⚠️ Os dois jogadores têm de ter emails diferentes'); return; }
+            if (p1.email.toLowerCase() === p2.email.toLowerCase()) { app.notify('⚠️ Os dois jogadores têm de ter emails diferentes'); return; }
           }
 
-          if (!accept) { alert('⚠️ Tens de aceitar o regulamento'); return; }
+          if (!accept) { app.notify('⚠️ Tens de aceitar o regulamento'); return; }
 
           const catNames = selectedCats.map(id => this.CATEGORIES.find(c => c.id === id)?.name || id);
           const playerName = isPadel ? `${p1.name} & ${p2.name}` : p1.name;
@@ -6723,10 +6723,10 @@
             if (this.currentUser?.role === 'admin') this.render();
 
             if (closedCats.length) {
-              alert('ℹ️ Inscrições fechadas (torneio já iniciado) em: ' + closedCats.join(', ') + '.');
+              app.notify('ℹ️ Inscrições fechadas (torneio já iniciado) em: ' + closedCats.join(', ') + '.');
             }
             if (warnFull.length) {
-              alert('ℹ️ Categoria(s) já no limite de vagas: ' + warnFull.join(', ') + '. O atleta fica inscrito na mesma.');
+              app.notify('ℹ️ Categoria(s) já no limite de vagas: ' + warnFull.join(', ') + '. O atleta fica inscrito na mesma.');
             }
 
             const accounts = [
@@ -6736,7 +6736,7 @@
             this.showInscriptionSuccess(playerName, catNames.join(', '), sport, accounts);
           } catch (error) {
             console.error('Erro:', error);
-            alert('Erro ao inscrever: ' + (error.message || error));
+            app.notify('Erro ao inscrever: ' + (error.message || error));
           }
         },
 
@@ -6823,7 +6823,7 @@
           this.CATEGORIES.forEach(cat => {
             (this.state.categories[cat.id] || []).forEach(pl => rows.push(this.playerToExportRow(pl, cat.id)));
           });
-          if (!rows.length) { alert('Não há jogadores inscritos para exportar.'); return; }
+          if (!rows.length) { app.notify('Não há jogadores inscritos para exportar.'); return; }
           const ws = XLSX.utils.json_to_sheet(rows, { header: this.PLAYER_EXPORT_COLUMNS });
           const wb = XLSX.utils.book_new();
           XLSX.utils.book_append_sheet(wb, ws, 'Jogadores');
@@ -6960,7 +6960,7 @@
           if (!rows || !rows.length) return;
           const errorEl = document.getElementById('importError');
           const btn = document.getElementById('importConfirmBtn');
-          if (!confirm(`Importar ${rows.length} jogador(es)?\n\nNada é apagado: os que já existirem são atualizados.`)) return;
+          if (!await app.ask(`Importar ${rows.length} jogador(es)?\n\nNada é apagado: os que já existirem são atualizados.`, { title: 'Importar jogadores', okLabel: 'Importar', icon: '⬆️' })) return;
           btn.disabled = true;
           btn.textContent = 'A importar…';
           try {
@@ -6987,7 +6987,7 @@
             this.closeGenericModal();
             this.renderVacanciesOverview();
             this.render();
-            alert(`✅ Importação concluída: ${rows.length} jogador(es).`);
+            app.notify(`✅ Importação concluída: ${rows.length} jogador(es).`);
           } catch (error) {
             console.error('Erro:', error);
             btn.disabled = false;
@@ -7210,6 +7210,61 @@
       </div>
       ${subtitulo ? `<p class="text-sm text-gray-500">${subtitulo}</p>` : ''}
       <div class="flex items-center gap-1.5 my-4">${bolas}</div>`;
+        },
+
+        // Diálogos da app que substituem alert() e confirm() do browser em toda a app.
+        // Têm camada própria (por cima de qualquer modal aberta, sem a fechar) e ficam em
+        // fila se aparecerem vários seguidos. notify() → Promise; ask() → Promise<boolean>.
+        _dialogQueue: Promise.resolve(),
+        notify(msg, opts) { return this._dialog('notify', msg, opts); },
+        ask(msg, opts) { return this._dialog('ask', msg, opts); },
+        _dialog(kind, msg, opts) {
+          const run = () => new Promise(resolve => {
+            const o = opts || {};
+            let el = document.getElementById('appDialog');
+            if (!el) {
+              el = document.createElement('div');
+              el.id = 'appDialog';
+              el.className = 'hidden fixed inset-0 modal-backdrop flex items-center justify-center p-4';
+              el.style.zIndex = '90';
+              document.body.appendChild(el);
+            }
+            const texto = String(msg ?? '');
+            const m = texto.match(/^\s*(⚠️|ℹ️|✅|❌|🎖️)\s*/u);
+            const icone = o.icon || (m ? m[1] : (kind === 'ask' ? '❓' : 'ℹ️'));
+            const corpo = (m ? texto.slice(m[0].length) : texto).trim();
+            const erro = /^erro/i.test(corpo);
+            const perigo = kind === 'ask' && (o.danger ?? /apagar|remover|reiniciar/i.test(corpo));
+            const titulo = o.title || (kind === 'ask' ? 'Confirmar'
+              : erro ? 'Erro' : icone === '✅' ? 'Concluído' : icone === '⚠️' ? 'Atenção' : 'Aviso');
+            el.innerHTML = `
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" role="alertdialog" aria-modal="true">
+          <h3 class="text-lg font-bold mb-3">${erro && !o.icon ? '⚠️' : icone} ${this.escapeHtml(titulo)}</h3>
+          <div class="text-sm text-gray-700 mb-5 break-words" style="white-space: pre-line">${this.escapeHtml(corpo)}</div>
+          <div class="flex gap-2">
+            ${kind === 'ask' ? `<button data-r="0" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">${this.escapeHtml(o.cancelLabel || 'Cancelar')}</button>` : ''}
+            <button data-r="1" class="flex-1 ${perigo ? 'btn-danger' : 'btn-primary'} text-white px-4 py-2 rounded-lg font-semibold">${this.escapeHtml(o.okLabel || (kind === 'ask' ? 'Confirmar' : 'OK'))}</button>
+          </div>
+        </div>`;
+            el.classList.remove('hidden');
+            const fechar = r => {
+              document.removeEventListener('keydown', tecla, true);
+              el.classList.add('hidden');
+              el.innerHTML = '';
+              resolve(kind === 'ask' ? r : undefined);
+            };
+            const tecla = e => {
+              if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); fechar(false); }
+              else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); fechar(true); }
+            };
+            el.querySelectorAll('button[data-r]').forEach(b => { b.onclick = () => fechar(b.dataset.r === '1'); });
+            el.onclick = e => { if (e.target === el) fechar(false); };
+            document.addEventListener('keydown', tecla, true);
+            el.querySelector('button[data-r="1"]').focus();
+          });
+          const p = this._dialogQueue.then(run, run);
+          this._dialogQueue = p.catch(() => {});
+          return p;
         },
 
         // Pergunta de confirmação na modal da app (em vez do confirm() do browser).
@@ -7510,7 +7565,7 @@
 
         async removePlayer(catId, playerId) {
           const player = this.state.categories[catId]?.find(p => p.id === playerId);
-          if (!confirm(`Remover "${player?.name}"?`)) return;
+          if (!await app.ask(`Remover "${player?.name}"?`, { title: 'Remover atleta', okLabel: 'Remover', icon: '🗑️' })) return;
           try {
             await this.removePlayerFromSupabase(catId, playerId);
             this.state.categories[catId] = this.state.categories[catId].filter(p => p.id !== playerId);
@@ -7519,7 +7574,7 @@
             this.renderVacanciesOverview();
           } catch (error) {
             console.error('Erro:', error);
-            alert('Erro ao remover atleta.');
+            app.notify('Erro ao remover atleta.');
           }
         },
 
@@ -7530,7 +7585,7 @@
           const cat = this.CATEGORIES.find(c => c.id === catId);
           if (!player) return;
           const isSelf = this.currentUser.role === 'player' && this.currentUser.playerId === playerId;
-          if (!confirm(`Remover a participação de "${player.name}" na categoria ${cat?.name || catId}?`)) return;
+          if (!await app.ask(`Remover a participação de "${player.name}" na categoria ${cat?.name || catId}?`, { title: 'Remover participação', okLabel: 'Remover', icon: '🗑️' })) return;
           try {
             await this.removePlayerFromSupabase(catId, playerId);
             this.state.categories[catId] = (this.state.categories[catId] || []).filter(p => p.id !== playerId);
@@ -7538,14 +7593,14 @@
             this.renderVacanciesOverview();
             if (isSelf) {
               // O atleta removeu-se a si próprio da categoria em que estava a ver a app.
-              alert('Participação removida. Vais voltar ao ecrã inicial.');
+              await app.notify('Participação removida. Vais voltar ao ecrã inicial.');
               await this.logout();
               return;
             }
             this.render();
           } catch (error) {
             console.error('Erro:', error);
-            alert('Erro ao remover participação: ' + (error.message || error));
+            app.notify('Erro ao remover participação: ' + (error.message || error));
           }
         },
 
@@ -7601,7 +7656,7 @@
             this.render();
           } catch (error) {
             console.error('Erro:', error);
-            alert('Erro ao guardar resultado: ' + (error.message || error));
+            app.notify('Erro ao guardar resultado: ' + (error.message || error));
           }
         },
 
@@ -7664,11 +7719,11 @@
           const match = this.state.matches[catId].find(m => m.id === matchId);
           // Regras: só o próprio jogo, não pode reescrever um já inserido (tem de contestar) e dentro do prazo.
           if (this.currentUser.role === 'player' && match.p1 !== this.currentUser.playerId && match.p2 !== this.currentUser.playerId) {
-            alert('⚠️ Só podes inserir o resultado dos teus jogos.'); return;
+            app.notify('⚠️ Só podes inserir o resultado dos teus jogos.'); return;
           }
-          if (match.completed) { alert('⚠️ Este resultado já foi inserido. Se estiver errado, usa "Contestar resultado".'); return; }
+          if (match.completed) { app.notify('⚠️ Este resultado já foi inserido. Se estiver errado, usa "Contestar resultado".'); return; }
           if (this.currentUser.role === 'player' && this.isMatchDeadlinePast(catId, match)) {
-            alert('⚠️ O prazo desta jornada já terminou. Só o admin pode inserir o resultado — usa "Contestar resultado" para falar com o admin.'); return;
+            app.notify('⚠️ O prazo desta jornada já terminou. Só o admin pode inserir o resultado — usa "Contestar resultado" para falar com o admin.'); return;
           }
           const sets = [0, 1, 2].map(i => ({
             p1: document.getElementById(`s${i}p1`).value === '' ? null : parseInt(document.getElementById(`s${i}p1`).value),
@@ -7676,10 +7731,10 @@
           }));
           const superTB = document.getElementById('superTB').checked;
           const hasAny = sets.some(s => s.p1 !== null || s.p2 !== null);
-          if (!hasAny) { alert('Introduz pelo menos um set'); return; }
+          if (!hasAny) { app.notify('Introduz pelo menos um set'); return; }
           for (let i = 0; i < 2; i++) {
             if (sets[i].p1 !== null && sets[i].p2 !== null && sets[i].p1 === sets[i].p2) {
-              alert(`Set ${i + 1}: resultado inválido`);
+              app.notify(`Set ${i + 1}: resultado inválido`);
               return;
             }
           }
@@ -7687,7 +7742,7 @@
           match.superTB = superTB;
           match.completed = this.isMatchComplete(match);
           if (!match.completed) {
-            alert('O resultado deve ter um vencedor (2 sets ganhos).');
+            app.notify('O resultado deve ter um vencedor (2 sets ganhos).');
             return;
           }
           try {
@@ -7702,11 +7757,11 @@
             this.closeGenericModal();
             this.render();
             setTimeout(() => {
-              alert(`✅ Resultado submetido com sucesso!\n\n${p1.name} vs ${p2.name}\n${scores}\n\nVencedor: ${winnerName}`);
+              app.notify(`✅ Resultado submetido com sucesso!\n\n${p1.name} vs ${p2.name}\n${scores}\n\nVencedor: ${winnerName}`);
             }, 100);
           } catch (error) {
             console.error('Erro:', error);
-            alert('Erro ao submeter resultado: ' + (error.message || error));
+            app.notify('Erro ao submeter resultado: ' + (error.message || error));
           }
         },
 
@@ -7742,7 +7797,7 @@
 
         async submitContest(catId, matchId) {
           const text = document.getElementById('contestText').value.trim();
-          if (!text) { alert('Escreve o motivo da contestação.'); return; }
+          if (!text) { app.notify('Escreve o motivo da contestação.'); return; }
           const match = this.state.matches[catId].find(m => m.id === matchId);
           const players = this.state.categories[catId];
           const p1 = players.find(p => p.id === match.p1);
@@ -7757,10 +7812,10 @@
             this.currentChatChannel = dmChannel;
             this.switchTab('chat');
             this.openChatConversationView();
-            alert('Contestação enviada em mensagem privada aos admins. Podes continuar a conversa no canal 🔒 Admins.');
+            app.notify('Contestação enviada em mensagem privada aos admins. Podes continuar a conversa no canal 🔒 Admins.');
           } catch (error) {
             console.error('Erro:', error);
-            alert('Erro ao enviar contestação: ' + (error.message || error));
+            app.notify('Erro ao enviar contestação: ' + (error.message || error));
           }
         },
 
@@ -7942,9 +7997,9 @@
         exportTournamentBoard(catId) {
           const cat = this.getCategory(catId);
           const t = this.getTournament(catId);
-          if (!cat || !t.started) { alert('Este torneio ainda não foi iniciado.'); return; }
+          if (!cat || !t.started) { app.notify('Este torneio ainda não foi iniciado.'); return; }
           const win = window.open('', '_blank');
-          if (!win) { alert('O browser bloqueou a nova janela. Permite pop-ups para este site e tenta de novo.'); return; }
+          if (!win) { app.notify('O browser bloqueou a nova janela. Permite pop-ups para este site e tenta de novo.'); return; }
           win.document.open();
           win.document.write(this.tournamentBoardHTML(catId));
           win.document.close();
