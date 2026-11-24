@@ -1580,12 +1580,20 @@
         },
         // Cria (ou volta a mostrar) o torneio Open de um escalão com divisões. Não mexe nas
         // divisões: é só mais um torneio do escalão, aberto a todos, sem subidas/descidas.
-        async createOpenTournament(groupId) {
+        async createOpenTournament(groupId, confirmado) {
           const parent = this.getCategory(groupId);
           if (!parent || parent.parentId) return;
           const id = this.openCatId(groupId);
           const existente = (this.ALL_CATEGORIES || []).find(c => c.id === id);
-          if (!existente && !confirm(`Criar o torneio Open de "${parent.name}"?\n\nÉ aberto a todos: jogadores de qualquer divisão e sem divisão. As divisões e os seus torneios ficam como estão.`)) return;
+          if (!existente && !confirmado) {
+            this.modalConfirm('🌐', 'Criar torneio Open', `
+              <p>Vai ser criado o torneio <strong>Open • ${this.escapeHtml(parent.name)}</strong>.</p>
+              <p>É aberto a todos: jogadores de qualquer divisão e sem divisão, sem subidas nem descidas.</p>
+              <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-900">✅ As divisões e os seus torneios ficam como estão.</div>`,
+              'Criar Open', `app.createOpenTournament('${groupId}', true)`);
+            return;
+          }
+          if (confirmado) this.setModalContent(this.modalBusy('A criar o torneio Open…', 'Não feches a janela.'));
           try {
             await this.persistCategory(this.normalizeCategory({
               ...parent,
@@ -1598,9 +1606,11 @@
               active: true
             }));
             await this.reloadAfterCategoryChange();
+            if (confirmado) this.closeGenericModal();
           } catch (e) {
             console.error(e);
-            alert('Erro ao criar o torneio Open: ' + (e.message || e));
+            this.openGenericModal(this.modalErro('O torneio Open não foi criado', e.message || String(e),
+              'Tentar de novo', `app.createOpenTournament('${groupId}', true)`));
           }
         },
         // Divisões (escalões filhos) de um escalão pai, da mais para a menos importante.
@@ -1651,14 +1661,27 @@
         },
 
         // Cria (ou volta a mostrar) as 3 divisões de um escalão de ténis.
-        async enableDivisions(groupId) {
+        async enableDivisions(groupId, confirmado) {
           const parent = this.getCategory(groupId);
           if (!parent || parent.sport !== 'tenis' || parent.parentId) return;
           if (!this.divisionsTableReady) {
-            alert('⚠️ Antes de ativar as divisões, corre o ficheiro migracao_divisoes.sql no SQL Editor do Supabase (só acrescenta tabelas/colunas, não mexe nos dados).');
+            this.modalInfo('⚠️', 'Falta preparar a base de dados',
+              '<p>Antes de ativar as divisões, corre o ficheiro <strong>migracao_divisoes.sql</strong> no SQL Editor do Supabase.</p><p class="text-gray-500">Só acrescenta tabelas e colunas — não mexe nos dados.</p>');
             return;
           }
-          if (!confirm(`Criar as divisões ATP Masters 1000, ATP Challenger e ITF Tennis Tour em "${parent.name}"?\n\nCada divisão é um torneio independente (máx. ${this.DIVISION_MAX} jogadores). O torneio atual de ${parent.name} — jogos, resultados e inscritos — não é alterado.`)) return;
+          if (!confirmado) {
+            const nome = this.escapeHtml(parent.name);
+            const aDecorrer = this.getTournament(groupId).started;
+            this.modalConfirm('🎖️', 'Ativar divisões', `
+              <p>Vão ser criadas 3 divisões em <strong>${nome}</strong>:</p>
+              <div class="flex flex-wrap gap-2">${this.DIVISIONS.map(d => `<span class="px-3 py-1 rounded-full bg-gray-100 font-semibold text-xs">${d.icon} ${d.name}</span>`).join('')}</div>
+              <p>Cada divisão é um torneio independente, com no máximo <strong>${this.DIVISION_MAX} jogadores</strong>. No fim de cada torneio sobem os ${this.DIVISION_MOVES} primeiros e descem os ${this.DIVISION_MOVES} últimos.</p>
+              <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-900">
+                ✅ ${aDecorrer ? `O torneio atual de ${nome} está a decorrer e <strong>não é alterado</strong> — jogos, resultados e inscritos ficam como estão.` : `Os inscritos atuais de ${nome} ficam como estão; atribuis-lhes a divisão a seguir.`}
+              </div>`, 'Ativar divisões', `app.enableDivisions('${groupId}', true)`);
+            return;
+          }
+          this.setModalContent(this.modalBusy('A criar as divisões…', 'Não feches a janela.'));
           try {
             for (const d of this.DIVISIONS) {
               const id = this.divisionCatId(groupId, d.level);
@@ -1675,17 +1698,19 @@
               }));
             }
             await this.reloadAfterCategoryChange();
+            this.closeGenericModal();
             this.switchTab('divisoes');
           } catch (e) {
             console.error(e);
-            alert('Erro ao criar as divisões: ' + (e.message || e));
+            this.setModalContent(this.modalErro('As divisões não foram criadas', e.message || String(e),
+              'Tentar de novo', `app.enableDivisions('${groupId}', true)`));
           }
         },
 
         // ---------- Atribuição pelo admin ----------
         async setPlayerDivision(groupId, email, level) {
           if (this.currentUser?.role !== 'admin') return;
-          if (!this.divisionsTableReady) { alert('⚠️ Corre primeiro o migracao_divisoes.sql no Supabase.'); return; }
+          if (!this.divisionsTableReady) { this.modalInfo('⚠️', 'Falta preparar a base de dados', '<p>Corre primeiro o <strong>migracao_divisoes.sql</strong> no Supabase.</p>'); return; }
           const e = (email || '').toLowerCase();
           if (!e) return;
           const lvl = level ? Number(level) : null;
@@ -1710,10 +1735,10 @@
             await this.loadDivisions();
             const aviso = await this.moveParticipationToDivision(groupId, e, lvl);
             this.render();
-            if (aviso) alert(aviso);
+            if (aviso) this.modalInfo('ℹ️', 'Divisão registada', `<p>${this.escapeHtml(aviso)}</p>`);
           } catch (err) {
             console.error(err);
-            alert('Erro ao atribuir a divisão: ' + (err.message || err));
+            this.openGenericModal(this.modalErro('A divisão não foi atribuída', err.message || String(err), 'Voltar às divisões', 'app.closeGenericModal(); app.render()'));
           }
         },
 
@@ -1755,13 +1780,48 @@
             } catch (e) { avisos.push(`${p.name}: ${e.message || e}`); }
           }
           this.render();
-          if (avisos.length) alert(avisos.join('\n\n'));
+          if (avisos.length) this.modalInfo('ℹ️', 'Alguns jogadores não foram movidos', avisos.map(a => `<p>${this.escapeHtml(a)}</p>`).join(''));
+        },
+
+        // Pesquisa de contas (nome ou email) para "Atribuir a uma conta".
+        divisionAccountMatches(groupId) {
+          const q = this.normalizeSearch(document.getElementById(`divAddSearch-${groupId}`)?.value || '');
+          return Object.values(this.state.accounts)
+            .filter(a => a.email && (!q || this.normalizeSearch(`${a.name || ''} ${a.email}`).includes(q)))
+            .sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email))
+            .slice(0, 30);
+        },
+        filterDivisionAccounts(groupId) {
+          const box = document.getElementById(`divAddResults-${groupId}`);
+          if (!box) return;
+          const lista = this.divisionAccountMatches(groupId);
+          box.innerHTML = lista.length ? lista.map(a => {
+            const div = this.divisionInfo(this.getPlayerDivision(groupId, a.email));
+            const e = this.escapeHtml(a.email.replace(/'/g, "\\'"));
+            return `<div onmousedown="app.selectDivisionAccount('${groupId}', '${e}')" class="px-3 py-2 hover:bg-emerald-50 cursor-pointer">
+              <div class="flex justify-between gap-2 text-sm"><span class="font-semibold truncate">${this.escapeHtml(a.name || a.email)}</span>${div ? `<span class="text-[11px] text-gray-500 whitespace-nowrap">${div.icon} ${div.short}</span>` : ''}</div>
+              <div class="text-[11px] text-gray-500 truncate">${this.escapeHtml(a.email)}</div>
+            </div>`;
+          }).join('') : '<div class="p-3 text-xs text-gray-400">Sem resultados</div>';
+          box.classList.remove('hidden');
+        },
+        selectDivisionAccount(groupId, email) {
+          const a = this.state.accounts[(email || '').toLowerCase()];
+          document.getElementById(`divAddEmail-${groupId}`).value = email;
+          document.getElementById(`divAddSearch-${groupId}`).value = a?.name ? `${a.name} (${email})` : email;
+          document.getElementById(`divAddResults-${groupId}`).classList.add('hidden');
+          const atual = this.getPlayerDivision(groupId, email);
+          if (atual) document.getElementById(`divAddLevel-${groupId}`).value = String(atual);
+        },
+        pickFirstDivisionAccount(groupId) {
+          const primeiro = this.divisionAccountMatches(groupId)[0];
+          if (primeiro) this.selectDivisionAccount(groupId, primeiro.email);
         },
 
         addAccountToDivision(groupId) {
           const email = document.getElementById(`divAddEmail-${groupId}`)?.value;
           const level = document.getElementById(`divAddLevel-${groupId}`)?.value;
-          if (!email || !level) { alert('Escolhe o atleta e a divisão.'); return; }
+          if (!email || !level) { this.modalInfo('ℹ️', 'Falta escolher', '<p>Escolhe o atleta e a divisão.</p>'); return; }
           this.setPlayerDivision(groupId, email, level);
         },
 
@@ -1837,11 +1897,18 @@
           return true;
         },
 
-        async reapplyDivisionMoves(catId) {
+        async reapplyDivisionMoves(catId, confirmado) {
           const cat = this.getCategory(catId);
-          if (!confirm(`Voltar a calcular e aplicar as subidas/descidas de ${cat?.name}? (útil se corrigiste um resultado depois de o torneio terminar)`)) return;
-          try { await this.applyDivisionMoves(catId, true); this.render(); }
-          catch (e) { alert('Erro: ' + (e.message || e)); }
+          if (!confirmado) {
+            this.modalConfirm('↻', 'Recalcular subidas e descidas', `
+              <p>Voltar a calcular e aplicar as subidas e descidas de <strong>${this.escapeHtml(cat?.name || catId)}</strong> a partir da classificação atual.</p>
+              <p class="text-gray-500">Útil se corrigiste um resultado depois de o torneio terminar.</p>`,
+              'Recalcular', `app.reapplyDivisionMoves('${catId}', true)`);
+            return;
+          }
+          this.setModalContent(this.modalBusy('A recalcular…', 'A atualizar as divisões dos jogadores.'));
+          try { await this.applyDivisionMoves(catId, true); this.closeGenericModal(); this.render(); }
+          catch (e) { this.setModalContent(this.modalErro('Não foi possível recalcular', e.message || String(e), 'Tentar de novo', `app.reapplyDivisionMoves('${catId}', true)`)); }
         },
 
         // Automático: sempre que o admin está na app e um torneio de divisão termina
@@ -1868,7 +1935,12 @@
           } finally { this._applyingDivisions = false; }
           if (feitos.length) {
             if (this.currentTab === 'divisoes') this.render();
-            alert('🎖️ Torneio(s) de divisão terminado(s) — subidas e descidas aplicadas automaticamente:\n\n• ' + feitos.join('\n• ') + '\n\nVê o resultado em 🎖️ Divisões (podes sempre ajustar manualmente).');
+            if (document.getElementById('modal').classList.contains('hidden')) {
+              this.modalInfo('🎖️', 'Subidas e descidas aplicadas', `
+                <p>Torneio(s) de divisão terminado(s) — as subidas e descidas foram aplicadas automaticamente:</p>
+                <ul class="list-disc pl-5">${feitos.map(n => `<li>${this.escapeHtml(n)}</li>`).join('')}</ul>
+                <p class="text-gray-500">Vê o resultado em 🎖️ Divisões (podes sempre ajustar manualmente).</p>`);
+            }
           }
         },
 
@@ -2030,10 +2102,16 @@
             : `<p class="text-xs text-gray-400 mt-2">${tPai.started ? 'Sem inscrições em aberto (o torneio atual está a decorrer).' : 'Ninguém à espera de divisão.'}</p>`}
           <div class="mt-3 pt-3 border-t flex gap-2 flex-wrap items-center">
             <span class="text-xs font-semibold text-gray-600">Atribuir a uma conta:</span>
-            <select id="divAddEmail-${g.id}" class="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white max-w-[16rem]">
-              <option value="">Escolhe o atleta…</option>
-              ${contas.map(a => `<option value="${this.escapeHtml(a.email || '')}">${this.escapeHtml(a.name || a.email)}${a.name ? ' · ' + this.escapeHtml(a.email || '') : ''}${atribuicoes[(a.email || '').toLowerCase()] ? ' — ' + nomeDiv(atribuicoes[(a.email || '').toLowerCase()].division) : ''}</option>`).join('')}
-            </select>
+            <div class="relative w-full sm:w-72">
+              <input id="divAddSearch-${g.id}" type="text" autocomplete="off" placeholder="🔍 Escreve o nome ou email…"
+                oninput="document.getElementById('divAddEmail-${g.id}').value=''; app.filterDivisionAccounts('${g.id}')"
+                onfocus="app.filterDivisionAccounts('${g.id}')"
+                onkeydown="if (event.key === 'Enter') { event.preventDefault(); app.pickFirstDivisionAccount('${g.id}'); } else if (event.key === 'Escape') { this.blur(); }"
+                onblur="setTimeout(() => document.getElementById('divAddResults-${g.id}')?.classList.add('hidden'), 150)"
+                class="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white focus:ring-2 focus:ring-emerald-400 outline-none">
+              <input type="hidden" id="divAddEmail-${g.id}">
+              <div id="divAddResults-${g.id}" class="hidden absolute z-30 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto"></div>
+            </div>
             <select id="divAddLevel-${g.id}" class="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white">
               ${this.DIVISIONS.map(d => `<option value="${d.level}">${d.icon} ${d.name}</option>`).join('')}
             </select>
@@ -7091,6 +7169,36 @@
       </div>
       ${subtitulo ? `<p class="text-sm text-gray-500">${subtitulo}</p>` : ''}
       <div class="flex items-center gap-1.5 my-4">${bolas}</div>`;
+        },
+
+        // Pergunta de confirmação na modal da app (em vez do confirm() do browser).
+        // `acao` = código a correr no botão de confirmar (ex.: "app.enableDivisions('x', true)").
+        modalConfirm(icone, titulo, corpoHtml, okLabel, acao, okClass) {
+          this.openGenericModal(`
+      <div class="p-6">
+        <div class="flex justify-between items-start mb-3 gap-3">
+          <h3 class="text-xl font-bold">${icone} ${titulo}</h3>
+          <button onclick="app.closeGenericModal()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+        </div>
+        <div class="text-sm text-gray-700 space-y-3 mb-5">${corpoHtml}</div>
+        <div class="flex gap-2">
+          <button onclick="app.closeGenericModal()" class="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-semibold">Cancelar</button>
+          <button onclick="${acao}" class="flex-1 ${okClass || 'btn-primary'} text-white px-4 py-2 rounded-lg font-semibold">${okLabel}</button>
+        </div>
+      </div>`);
+        },
+
+        // Aviso na modal da app (em vez do alert() do browser).
+        modalInfo(icone, titulo, corpoHtml) {
+          this.openGenericModal(`
+      <div class="p-6">
+        <div class="flex justify-between items-start mb-3 gap-3">
+          <h3 class="text-xl font-bold">${icone} ${titulo}</h3>
+          <button onclick="app.closeGenericModal()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+        </div>
+        <div class="text-sm text-gray-700 space-y-3 mb-5">${corpoHtml}</div>
+        <button onclick="app.closeGenericModal()" class="w-full btn-primary text-white px-4 py-2 rounded-lg font-semibold">OK</button>
+      </div>`);
         },
 
         // Ecrã de espera dentro do modal (enquanto grava na base de dados).
