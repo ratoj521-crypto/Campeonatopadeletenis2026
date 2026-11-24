@@ -1259,7 +1259,8 @@
               </div>
             </div>
             <div class="p-4 text-xs text-gray-600 space-y-1">
-              ${cat.parentId ? `<div><strong>Divisão ${cat.division}</strong> de ${this.escapeHtml(this.getCategory(cat.parentId)?.name || cat.parentId)} • máx. ${this.DIVISION_MAX} jogadores</div>` : ''}
+              ${this.isOpen(cat) ? `<div><strong>Torneio Open</strong> de ${this.escapeHtml(this.getCategory(cat.parentId)?.name || cat.parentId)} • aberto a todos, sem subidas/descidas</div>` : ''}
+              ${this.isDivision(cat) ? `<div><strong>Divisão ${cat.division}</strong> de ${this.escapeHtml(this.getCategory(cat.parentId)?.name || cat.parentId)} • máx. ${this.DIVISION_MAX} jogadores</div>` : ''}
               ${!cat.parentId && this.hasDivisions(cat.id) ? `<div><strong>Divisões:</strong> ${this.divisionsOf(cat.id).map(d => d.icon + ' ' + this.escapeHtml(this.divisionInfo(d.division)?.short || d.name)).join(' › ')}</div>` : ''}
               <div><strong>Formato:</strong> ${this.FORMAT_RULES[cat.formatRule] || cat.formatRule}</div>
               <div><strong>Calendário:</strong> ${this.SCHEDULE_MODES[cat.scheduleMode] || cat.scheduleMode}</div>
@@ -1567,11 +1568,45 @@
         },
 
         divisionInfo(level) { return this.DIVISIONS.find(d => d.level === Number(level)) || null; },
-        isDivisionCat(catId) { return !!this.getCategory(catId)?.parentId; },
+        // Filhos de um escalão: divisões (division 1..3) e o torneio Open (division 0),
+        // que junta todos — jogadores de qualquer divisão e sem divisão.
+        isDivision(c) { return !!(c && c.parentId && Number(c.division) > 0); },
+        isOpen(c) { return !!(c && c.parentId && !(Number(c.division) > 0)); },
+        isDivisionCat(catId) { return this.isDivision(this.getCategory(catId)); },
+        openCatId(groupId) { return `open--${groupId}`; },
+        openCatOf(groupId, includeHidden) {
+          return (this.ALL_CATEGORIES || this.CATEGORIES)
+            .find(c => c.parentId === groupId && this.isOpen(c) && (includeHidden || c.active)) || null;
+        },
+        // Cria (ou volta a mostrar) o torneio Open de um escalão com divisões. Não mexe nas
+        // divisões: é só mais um torneio do escalão, aberto a todos, sem subidas/descidas.
+        async createOpenTournament(groupId) {
+          const parent = this.getCategory(groupId);
+          if (!parent || parent.parentId) return;
+          const id = this.openCatId(groupId);
+          const existente = (this.ALL_CATEGORIES || []).find(c => c.id === id);
+          if (!existente && !confirm(`Criar o torneio Open de "${parent.name}"?\n\nÉ aberto a todos: jogadores de qualquer divisão e sem divisão. As divisões e os seus torneios ficam como estão.`)) return;
+          try {
+            await this.persistCategory(this.normalizeCategory({
+              ...parent,
+              ...(existente || {}),
+              id, parentId: groupId, division: 0,
+              name: existente?.name || `Open • ${parent.name}`,
+              desc: existente?.desc || 'Aberto a todos (todas as divisões e sem divisão)',
+              icon: existente?.icon || '🌐', color: existente?.color || 'from-indigo-500 to-indigo-700',
+              sortOrder: existente?.sortOrder ?? ((parent.sortOrder || 0) + 4),
+              active: true
+            }));
+            await this.reloadAfterCategoryChange();
+          } catch (e) {
+            console.error(e);
+            alert('Erro ao criar o torneio Open: ' + (e.message || e));
+          }
+        },
         // Divisões (escalões filhos) de um escalão pai, da mais para a menos importante.
         divisionsOf(groupId, includeHidden) {
           return (this.ALL_CATEGORIES || this.CATEGORIES)
-            .filter(c => c.parentId === groupId && (includeHidden || c.active))
+            .filter(c => c.parentId === groupId && this.isDivision(c) && (includeHidden || c.active))
             .sort((a, b) => a.division - b.division);
         },
         hasDivisions(groupId) { return this.divisionsOf(groupId).length > 0; },
@@ -1759,7 +1794,7 @@
         // sobe e a última não desce.
         divisionMoves(catId) {
           const cat = this.getCategory(catId);
-          if (!cat?.parentId) return null;
+          if (!this.isDivision(cat)) return null;
           const ordem = this.divisionFinalOrder(catId);
           if (!ordem) return null;
           const players = this.state.categories[catId] || [];
@@ -1874,6 +1909,41 @@
     `;
         },
 
+        // Torneio Open do escalão: junta todos, sem tocar nas divisões.
+        openBlockHTML(g) {
+          const open = this.openCatOf(g.id, true);
+          if (!open || !open.active) {
+            return `
+        <div class="bg-white rounded-2xl shadow-sm border p-4 mt-4 flex items-center justify-between gap-3 flex-wrap">
+          <div class="min-w-0">
+            <div class="font-bold text-sm">🌐 Torneio Open</div>
+            <div class="text-xs text-gray-500">Um torneio com todos juntos (Masters, Challenger, ITF e sem divisão). As divisões não são alteradas.</div>
+          </div>
+          <button onclick="app.createOpenTournament('${g.id}')" class="text-xs px-3 py-1.5 btn-admin text-white rounded-lg font-semibold">${open ? '👁️ Voltar a mostrar o Open' : '➕ Criar torneio Open'}</button>
+        </div>`;
+          }
+          const t = this.getTournament(open.id);
+          const n = (this.state.categories[open.id] || []).length;
+          const estado = !t.started ? '🟡 Inscrições abertas' : this.champion(open.id) ? '🏁 Terminado' : '🟢 A decorrer';
+          return `
+        <div class="bg-white rounded-2xl shadow-sm border overflow-hidden mt-4">
+          <div class="bg-gradient-to-r ${open.color} p-4 text-white flex justify-between items-center gap-2 flex-wrap">
+            <div class="min-w-0">
+              <div class="font-bold">${open.icon} Torneio Open</div>
+              <div class="text-[11px] text-white/80">Aberto a todos • sem subidas nem descidas</div>
+            </div>
+            <div class="text-right text-xs"><div class="text-xl font-extrabold">${n}/${this.getCapacity(open.id)}</div><div>${estado}</div></div>
+          </div>
+          <div class="p-4 flex gap-2 flex-wrap">
+            <button onclick="app.openQuickInscriptionFor('${open.id}')" class="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg font-semibold">➕ Inscrever</button>
+            <button onclick="app.openTournamentDatesModal('${open.id}')" class="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg font-semibold">⚙️ Lotação</button>
+            <button onclick="app.currentCategory='${open.id}'; app.switchTab('calendario')" class="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg font-semibold">📅 Torneio</button>
+            <button onclick="app.currentCategory='${open.id}'; app.switchTab('classificacao')" class="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg font-semibold">📋 Classificação</button>
+            <button onclick="app.toggleCategoryActive('${open.id}')" class="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg font-semibold">🙈 Ocultar Open</button>
+          </div>
+        </div>`;
+        },
+
         renderDivisionGroup(g) {
           const divs = this.divisionsOf(g.id);
           const tPai = this.getTournament(g.id);
@@ -1971,6 +2041,7 @@
           </div>
         </div>
         <div class="grid md:grid-cols-3 gap-4">${divs.map(cartaoDivisao).join('')}</div>
+        ${this.openBlockHTML(g)}
         ${hist.length ? `
           <details class="bg-white rounded-2xl shadow-sm border p-4 mt-4">
             <summary class="font-bold text-sm cursor-pointer">🕘 Histórico de subidas e descidas (${hist.length})</summary>
@@ -6324,7 +6395,7 @@
           const sport = document.querySelector('input[name="inscriptionSport"]:checked')?.value || 'tenis';
           // As divisões não se escolhem aqui: o atleta inscreve-se no escalão e a app
           // encaminha-o para a divisão que o admin lhe atribuiu.
-          const filtered = this.CATEGORIES.filter(c => c.sport === sport && !c.parentId);
+          const filtered = this.CATEGORIES.filter(c => c.sport === sport && (!c.parentId || this.isOpen(c)));
           // Ténis: escolha única (radio). Padel: uma ou várias categorias (checkbox).
           const inputType = sport === 'padel' ? 'checkbox' : 'radio';
           return filtered.map(cat => {
@@ -7153,7 +7224,8 @@
           const comDivisoes = this.hasDivisions(catId);
           const notaDivisoes = comDivisoes
             ? `<div class="mt-1">🎖️ Este escalão tem divisões: o atleta entra diretamente na divisão que lhe estiver atribuída${t.started ? '' : ' (sem divisão, fica em "por atribuir")'}.</div>`
-            : (cat.parentId ? `<div class="mt-1">🎖️ Divisão — máximo ${this.DIVISION_MAX} jogadores. A divisão fica atribuída ao atleta.</div>` : '');
+            : this.isOpen(cat) ? '<div class="mt-1">🌐 Torneio Open — aberto a todos, independentemente da divisão.</div>'
+            : (this.isDivision(cat) ? `<div class="mt-1">🎖️ Divisão — máximo ${this.DIVISION_MAX} jogadores. A divisão fica atribuída ao atleta.</div>` : '');
           if (t.started && comDivisoes) {
             info.innerHTML = `
         <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900">
@@ -7200,7 +7272,7 @@
           if (duplas && !n2) return fail('Nas duplas são precisos os dois nomes.');
           if (duplas && this.normalizeSearch(n1) === this.normalizeSearch(n2)) return fail('Os dois jogadores não podem ser a mesma pessoa.');
           if (this.getTournament(catId).started && !this.hasDivisions(catId)) return fail('O torneio desta categoria já foi sorteado. Reabre-o em Calendário para inscrever mais atletas.');
-          if (cat.parentId && (this.state.categories[catId] || []).length >= this.DIVISION_MAX) {
+          if (this.isDivision(cat) && (this.state.categories[catId] || []).length >= this.DIVISION_MAX) {
             return fail(`${cat.name} já tem ${this.DIVISION_MAX} jogadores (máximo por divisão).`);
           }
           // Já inscrito nesta categoria?
@@ -7241,7 +7313,7 @@
               if (c.nova) await this.createAccount(c.email, { name: c.name, nif: '', address: '', phone: '' }, c.password);
             }
             // Inscrever diretamente numa divisão conta como atribuição dessa divisão pelo admin.
-            if (cat.parentId && this.divisionsTableReady && this.getPlayerDivision(cat.parentId, contas[0].email) !== cat.division) {
+            if (this.isDivision(cat) && this.divisionsTableReady && this.getPlayerDivision(cat.parentId, contas[0].email) !== cat.division) {
               const { error: dErr } = await sb.from('player_divisions').upsert([{
                 email: contas[0].email.toLowerCase(), group_id: cat.parentId, division: cat.division,
                 assigned_by: 'admin', updated_at: new Date().toISOString()
