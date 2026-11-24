@@ -602,7 +602,8 @@
       const DEMO_KEY = 'emtp-demo-db';
       const DEMO_PK = {
         players: 'id', matches: 'id', messages: 'id', inscriptions: 'id',
-        tournaments: 'cat_id', accounts: 'email', playoffs: 'cat_id', profiles: 'id', categories: 'id'
+        tournaments: 'cat_id', accounts: 'email', playoffs: 'cat_id', profiles: 'id', categories: 'id',
+        player_divisions: ['email', 'group_id'], division_history: 'id'
       };
 
       // Inscritos de exemplo, com números diferentes por categoria para dar
@@ -689,9 +690,9 @@
             },
             upsert(vals) {
               api._action = () => {
-                const pk = DEMO_PK[table] || 'id';
+                const pk = [].concat(DEMO_PK[table] || 'id');
                 return vals.map(v => {
-                  const i = rows().findIndex(r => String(r[pk]) === String(v[pk]));
+                  const i = rows().findIndex(r => pk.every(k => String(r[k]) === String(v[k])));
                   if (i >= 0) { rows()[i] = { ...rows()[i], ...v }; return rows()[i]; }
                   rows().push({ ...v });
                   return rows()[rows().length - 1];
@@ -793,6 +794,7 @@
                 if (String(pl.email || '').toLowerCase() === antigo) pl.email = novo;
                 if (String(pl.partner_email || '').toLowerCase() === antigo) pl.partner_email = novo;
               });
+              (db.player_divisions || []).forEach(d => { if (String(d.email).toLowerCase() === antigo) d.email = novo; });
               save();
               return ok(null);
             }
@@ -859,6 +861,17 @@
           weekly: 'Jornadas semanais (datas indicativas, os atletas combinam)',
           saturday: 'Dias de jogo ao sábado (horários e campos automáticos)'
         },
+        // Divisões dos escalões de ténis, da mais importante (1) para a menos importante (3).
+        // Cada divisão é um torneio independente (um escalão próprio ligado ao escalão pai),
+        // com no máximo DIVISION_MAX jogadores. No fim de cada torneio sobem os
+        // DIVISION_MOVES primeiros e descem os DIVISION_MOVES últimos.
+        DIVISIONS: [
+          { level: 1, key: 'masters1000', name: 'ATP Masters 1000', short: 'Masters 1000', icon: '🥇', color: 'from-amber-500 to-amber-700' },
+          { level: 2, key: 'challenger', name: 'ATP Challenger', short: 'Challenger', icon: '🥈', color: 'from-gray-500 to-gray-700' },
+          { level: 3, key: 'itf', name: 'ITF Tennis Tour', short: 'ITF', icon: '🥉', color: 'from-emerald-500 to-emerald-700' }
+        ],
+        DIVISION_MAX: 8,
+        DIVISION_MOVES: 2,
         // Lotação por defeito de uma categoria. O admin pode definir outra por categoria
         // (Calendário → Datas e Lotação), guardada em tournaments.capacity.
         MAX_PER_CATEGORY: 8,
@@ -886,7 +899,9 @@
           tournaments: {},
           accounts: {},
           previousRanking: {},
-          readMessages: {}
+          readMessages: {},
+          playerDivisions: {},   // { [groupId]: { [email]: { division, assignedBy, updatedAt } } }
+          divisionHistory: []
         },
         currentUser: null,
         pendingAction: null,
@@ -961,7 +976,8 @@
           const map = {
             name: 'name', description: 'desc', icon: 'icon', color: 'color', sport: 'sport',
             sort_order: 'sortOrder', active: 'active', format_rule: 'formatRule', schedule_mode: 'scheduleMode',
-            match_days: 'matchDays', day_start: 'dayStart', day_end: 'dayEnd', match_minutes: 'matchMinutes', courts: 'courts'
+            match_days: 'matchDays', day_start: 'dayStart', day_end: 'dayEnd', match_minutes: 'matchMinutes', courts: 'courts',
+            parent_id: 'parentId', division: 'division'
           };
           Object.entries(map).forEach(([col, key]) => { if (r[col] !== null && r[col] !== undefined) o[key] = r[col]; });
           return o;
@@ -972,7 +988,10 @@
             id: c.id, name: c.name, description: c.desc || null, icon: c.icon, color: c.color, sport: c.sport,
             sort_order: c.sortOrder, active: c.active !== false, format_rule: c.formatRule, schedule_mode: c.scheduleMode,
             match_days: c.matchDays || [], day_start: c.dayStart, day_end: c.dayEnd,
-            match_minutes: c.matchMinutes, courts: c.courts, updated_at: new Date().toISOString()
+            match_minutes: c.matchMinutes, courts: c.courts, updated_at: new Date().toISOString(),
+            // Colunas das divisões: só se enviam em escalões que são divisões, para que
+            // gravar um escalão normal continue a funcionar mesmo antes da migração.
+            ...(c.parentId ? { parent_id: c.parentId, division: c.division } : {})
           };
         },
 
@@ -1201,12 +1220,19 @@
               </div>
             </div>
             <div class="p-4 text-xs text-gray-600 space-y-1">
+              ${cat.parentId ? `<div><strong>Divisão ${cat.division}</strong> de ${this.escapeHtml(this.getCategory(cat.parentId)?.name || cat.parentId)} • máx. ${this.DIVISION_MAX} jogadores</div>` : ''}
+              ${!cat.parentId && this.hasDivisions(cat.id) ? `<div><strong>Divisões:</strong> ${this.divisionsOf(cat.id).map(d => d.icon + ' ' + this.escapeHtml(this.divisionInfo(d.division)?.short || d.name)).join(' › ')}</div>` : ''}
               <div><strong>Formato:</strong> ${this.FORMAT_RULES[cat.formatRule] || cat.formatRule}</div>
               <div><strong>Calendário:</strong> ${this.SCHEDULE_MODES[cat.scheduleMode] || cat.scheduleMode}</div>
               ${cat.scheduleMode === 'saturday' ? `<div><strong>Sábados:</strong> ${cat.matchDays.length ? cat.matchDays.map(d => this.formatScheduleDate(d)).join(', ') : '<span class="text-red-600">por definir</span>'} • ${cat.dayStart}–${cat.dayEnd} • ${cat.matchMinutes} min • ${cat.courts} campo(s)</div>` : ''}
               <div class="flex gap-2 pt-2 flex-wrap">
                 <button onclick="app.openCategoryModal('${cat.id}')" class="px-3 py-1.5 btn-admin text-white rounded-lg font-semibold">✏️ Editar</button>
                 <button onclick="app.toggleCategoryActive('${cat.id}')" class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg font-semibold">${cat.active ? '🙈 Ocultar' : '👁️ Mostrar'}</button>
+                ${cat.sport === 'tenis' && !cat.parentId && cat.active
+                  ? (this.hasDivisions(cat.id)
+                    ? `<button onclick="app.switchTab('divisoes')" class="px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-lg font-semibold">🎖️ Divisões</button>`
+                    : `<button onclick="app.enableDivisions('${cat.id}')" class="px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-lg font-semibold">🎖️ Ativar divisões</button>`)
+                  : ''}
               </div>
             </div>
           </div>`;
@@ -1403,6 +1429,10 @@
             alert('Este escalão tem inscritos ou jogos. Remove-os primeiro (ou reinicia o torneio) antes de o ocultar.');
             return;
           }
+          if (cat.active && this.hasDivisions(catId)) {
+            alert('Este escalão tem divisões ativas: é através dele que os atletas se inscrevem (e são encaminhados para a sua divisão). Oculta primeiro as divisões, se as quiseres desativar.');
+            return;
+          }
           if (cat.active && !confirm(`Ocultar "${cat.name}"? Deixa de aparecer no site e nas inscrições (não apaga nada).`)) return;
           try {
             await this.persistCategory({ ...cat, active: !cat.active });
@@ -1456,6 +1486,7 @@
           const capacity = parseInt(document.getElementById('tourCapacity').value);
           if (!capacity || capacity < 2) return fail('A lotação tem de ser pelo menos 2.');
           if (capacity < inscritos) return fail(`A lotação não pode ser inferior aos ${inscritos} inscritos.`);
+          if (this.isDivisionCat(catId) && capacity > this.DIVISION_MAX) return fail(`Cada divisão tem no máximo ${this.DIVISION_MAX} jogadores.`);
           const cat = this.normalizeCategory({ ...this.getCategory(catId), ...sat });
           try {
             await this.persistCategory(cat);
@@ -1466,6 +1497,451 @@
             console.error(e);
             fail('Erro ao guardar: ' + (e.message || e));
           }
+        },
+
+        // ============================================
+        // DIVISÕES (ténis): ATP Masters 1000 > ATP Challenger > ITF Tennis Tour
+        // ============================================
+        // Cada divisão é um escalão próprio (linha de `categories` com parentId/division),
+        // por isso tem torneio, sorteio, jogos, classificação e chat independentes — usa
+        // tudo o que já existe para os outros escalões. O escalão pai (ex.: Sénior Masculino)
+        // mantém-se: o torneio que lá estiver a decorrer não é tocado, e é por ele que os
+        // atletas se inscrevem (a app encaminha-os para a divisão que lhes foi atribuída).
+        // A divisão de cada pessoa (por email) fica em `player_divisions` e persiste entre
+        // torneios: a 1ª atribuição é do admin; depois sobe/desce automaticamente.
+        async loadDivisions() {
+          this.state.playerDivisions = {};
+          this.state.divisionHistory = [];
+          this.divisionsTableReady = false;
+          try {
+            const { data, error } = await sb.from('player_divisions').select('*');
+            if (!error && Array.isArray(data)) {
+              this.divisionsTableReady = true;
+              data.forEach(r => {
+                const g = (this.state.playerDivisions[r.group_id] = this.state.playerDivisions[r.group_id] || {});
+                g[(r.email || '').toLowerCase()] = { division: r.division, assignedBy: r.assigned_by, updatedAt: r.updated_at };
+              });
+            }
+            const { data: hist, error: hErr } = await sb.from('division_history').select('*').order('created_at', { ascending: false });
+            if (!hErr && Array.isArray(hist)) this.state.divisionHistory = hist;
+          } catch (e) { console.warn('Tabelas das divisões indisponíveis — corre o migracao_divisoes.sql.', e); }
+        },
+
+        divisionInfo(level) { return this.DIVISIONS.find(d => d.level === Number(level)) || null; },
+        isDivisionCat(catId) { return !!this.getCategory(catId)?.parentId; },
+        // Divisões (escalões filhos) de um escalão pai, da mais para a menos importante.
+        divisionsOf(groupId, includeHidden) {
+          return (this.ALL_CATEGORIES || this.CATEGORIES)
+            .filter(c => c.parentId === groupId && (includeHidden || c.active))
+            .sort((a, b) => a.division - b.division);
+        },
+        hasDivisions(groupId) { return this.divisionsOf(groupId).length > 0; },
+        divisionGroups() {
+          return (this.ALL_CATEGORIES || this.CATEGORIES).filter(c => !c.parentId && this.hasDivisions(c.id));
+        },
+        // O id da divisão NÃO começa por `${groupId}-`: os chats dos jogos são apagados por
+        // prefixo (`match:${catId}-%`) e reiniciar o escalão pai não pode tocar nas divisões.
+        divisionCatId(groupId, level) { return `div${level}--${groupId}`; },
+        divisionCat(groupId, level) {
+          return this.divisionsOf(groupId).find(c => c.division === Number(level)) || null;
+        },
+        getPlayerDivision(groupId, email) {
+          return this.state.playerDivisions?.[groupId]?.[(email || '').toLowerCase()]?.division || null;
+        },
+        // Divisões atribuídas a um email, em todos os escalões: [{ group, level }].
+        divisionsOfEmail(email) {
+          const e = (email || '').toLowerCase();
+          return Object.entries(this.state.playerDivisions || {})
+            .filter(([, byEmail]) => byEmail[e])
+            .map(([groupId, byEmail]) => ({ group: this.getCategory(groupId), level: byEmail[e].division }))
+            .filter(x => x.group);
+        },
+        // Torneio onde deve entrar uma inscrição num escalão: se tiver divisões e o atleta
+        // já tiver divisão atribuída (aberta e com vaga), vai diretamente para ela; senão
+        // fica no escalão pai, "por atribuir", até o admin decidir.
+        divisionTargetFor(catId, email) {
+          if (!this.hasDivisions(catId)) return catId;
+          const div = this.divisionCat(catId, this.getPlayerDivision(catId, email));
+          if (!div || this.getTournament(div.id).started) return catId;
+          if ((this.state.categories[div.id] || []).length >= this.DIVISION_MAX) return catId;
+          return div.id;
+        },
+        // Participações (linhas de players) deste email no escalão pai e nas divisões.
+        groupParticipations(groupId, email) {
+          const e = (email || '').toLowerCase();
+          const out = [];
+          [groupId, ...this.divisionsOf(groupId, true).map(c => c.id)].forEach(id => {
+            (this.state.categories[id] || []).forEach(p => { if ((p.email || '').toLowerCase() === e) out.push({ catId: id, player: p }); });
+          });
+          return out;
+        },
+
+        // Cria (ou volta a mostrar) as 3 divisões de um escalão de ténis.
+        async enableDivisions(groupId) {
+          const parent = this.getCategory(groupId);
+          if (!parent || parent.sport !== 'tenis' || parent.parentId) return;
+          if (!this.divisionsTableReady) {
+            alert('⚠️ Antes de ativar as divisões, corre o ficheiro migracao_divisoes.sql no SQL Editor do Supabase (só acrescenta tabelas/colunas, não mexe nos dados).');
+            return;
+          }
+          if (!confirm(`Criar as divisões ATP Masters 1000, ATP Challenger e ITF Tennis Tour em "${parent.name}"?\n\nCada divisão é um torneio independente (máx. ${this.DIVISION_MAX} jogadores). O torneio atual de ${parent.name} — jogos, resultados e inscritos — não é alterado.`)) return;
+          try {
+            for (const d of this.DIVISIONS) {
+              const id = this.divisionCatId(groupId, d.level);
+              const existente = (this.ALL_CATEGORIES || []).find(c => c.id === id);
+              await this.persistCategory(this.normalizeCategory({
+                ...parent,                 // herda modalidade, formato e calendário do escalão pai
+                ...(existente || {}),
+                id, parentId: groupId, division: d.level,
+                name: existente?.name || `${d.name} • ${parent.name}`,
+                desc: existente?.desc || `${parent.name} — Divisão ${d.level}`,
+                icon: existente?.icon || d.icon, color: existente?.color || d.color,
+                sortOrder: existente?.sortOrder ?? ((parent.sortOrder || 0) + d.level),
+                active: true
+              }));
+            }
+            await this.reloadAfterCategoryChange();
+            this.switchTab('divisoes');
+          } catch (e) {
+            console.error(e);
+            alert('Erro ao criar as divisões: ' + (e.message || e));
+          }
+        },
+
+        // ---------- Atribuição pelo admin ----------
+        async setPlayerDivision(groupId, email, level) {
+          if (this.currentUser?.role !== 'admin') return;
+          if (!this.divisionsTableReady) { alert('⚠️ Corre primeiro o migracao_divisoes.sql no Supabase.'); return; }
+          const e = (email || '').toLowerCase();
+          if (!e) return;
+          const lvl = level ? Number(level) : null;
+          const antes = this.getPlayerDivision(groupId, e);
+          try {
+            if (lvl) {
+              const { error } = await sb.from('player_divisions').upsert([{
+                email: e, group_id: groupId, division: lvl, assigned_by: 'admin', updated_at: new Date().toISOString()
+              }]);
+              if (error) throw error;
+            } else {
+              const { error } = await sb.from('player_divisions').delete().eq('email', e).eq('group_id', groupId);
+              if (error) throw error;
+            }
+            if (antes !== lvl) {
+              await sb.from('division_history').insert([{
+                id: `dh-${Date.now()}`, group_id: groupId, email: e,
+                player_name: this.state.accounts[e]?.name || this.groupParticipations(groupId, e)[0]?.player.name || e,
+                from_division: antes, to_division: lvl, reason: 'admin', created_at: new Date().toISOString()
+              }]);
+            }
+            await this.loadDivisions();
+            const aviso = await this.moveParticipationToDivision(groupId, e, lvl);
+            this.render();
+            if (aviso) alert(aviso);
+          } catch (err) {
+            console.error(err);
+            alert('Erro ao atribuir a divisão: ' + (err.message || err));
+          }
+        },
+
+        // Leva a inscrição (de um torneio ainda NÃO iniciado) para a divisão atribuída.
+        // Torneios já iniciados nunca são alterados: a divisão fica registada para a época seguinte.
+        async moveParticipationToDivision(groupId, email, level) {
+          const abertas = this.groupParticipations(groupId, email).filter(x => !this.getTournament(x.catId).started);
+          if (!abertas.length) return null;
+          const { catId: origem, player: p } = abertas[0];
+          const pai = this.getCategory(groupId);
+          const destino = level ? this.divisionCat(groupId, level) : (pai?.active ? pai : null);
+          if (!destino || destino.id === origem) return null;
+          if (this.getTournament(destino.id).started) {
+            return `${destino.name} já está a decorrer: a divisão ficou registada e aplica-se na próxima época. A inscrição de ${p.name} mantém-se em ${this.getCategory(origem)?.name || origem}.`;
+          }
+          if (level && (this.state.categories[destino.id] || []).length >= this.DIVISION_MAX) {
+            return `${destino.name} já tem ${this.DIVISION_MAX} jogadores (máximo). A divisão ficou registada, mas a inscrição de ${p.name} mantém-se em ${this.getCategory(origem)?.name || origem}.`;
+          }
+          await this.updatePlayerCategoryInSupabase(p.id, destino.id, {
+            name: p.name, type: p.type, sport: p.sport, partnerName: p.partner?.name || null
+          });
+          this.state.categories[origem] = (this.state.categories[origem] || []).filter(x => x.id !== p.id);
+          this.state.categories[destino.id] = [...(this.state.categories[destino.id] || []), p];
+          this.state.matches[origem] = this.generateRoundRobin(this.state.categories[origem]);
+          this.state.matches[destino.id] = this.generateRoundRobin(this.state.categories[destino.id]);
+          this.renderVacanciesOverview();
+          return null;
+        },
+
+        // Coloca nas divisões todos os inscritos (em aberto) do escalão pai que já têm divisão.
+        async syncGroupDivisions(groupId) {
+          const pendentes = (this.state.categories[groupId] || []).filter(p => this.getPlayerDivision(groupId, p.email));
+          if (this.getTournament(groupId).started || !pendentes.length) return;
+          const avisos = [];
+          for (const p of pendentes) {
+            try {
+              const a = await this.moveParticipationToDivision(groupId, p.email, this.getPlayerDivision(groupId, p.email));
+              if (a) avisos.push(a);
+            } catch (e) { avisos.push(`${p.name}: ${e.message || e}`); }
+          }
+          this.render();
+          if (avisos.length) alert(avisos.join('\n\n'));
+        },
+
+        addAccountToDivision(groupId) {
+          const email = document.getElementById(`divAddEmail-${groupId}`)?.value;
+          const level = document.getElementById(`divAddLevel-${groupId}`)?.value;
+          if (!email || !level) { alert('Escolhe o atleta e a divisão.'); return; }
+          this.setPlayerDivision(groupId, email, level);
+        },
+
+        // ---------- Subidas e descidas ----------
+        // Ordem final (1º → último) de um torneio de divisão, ou null se ainda não terminou:
+        // campeão e finalista da fase final (quando há), depois a classificação dos grupos.
+        divisionFinalOrder(catId) {
+          const t = this.getTournament(catId);
+          const champ = this.champion(catId);
+          if (!champ) return null;
+          const top = [champ];
+          if (t.numGroups > 1 && t.finalType !== 'none') {
+            if (t.finalType === 'minigroup') {
+              this.getRanking(catId, { phase: 'final', playerIds: t.finalSeeds || [] })
+                .forEach(r => { if (!top.includes(r.id)) top.push(r.id); });
+            } else {
+              let a, b;
+              if (t.finalType === 'single') [a, b] = t.finalSeeds || [];
+              else [a, b] = this.bracketSlots(catId, this.currentFinalRound(catId));
+              const vice = a === champ ? b : a;
+              if (vice) top.push(vice);
+            }
+          }
+          const resto = this.getRanking(catId).map(r => r.id).filter(id => !top.includes(id));
+          return [...top, ...resto];
+        },
+
+        // Movimentos de um torneio de divisão terminado: sobem os 2 primeiros, descem os 2
+        // últimos (com menos de 4 jogadores, metade para cada lado). A divisão de topo não
+        // sobe e a última não desce.
+        divisionMoves(catId) {
+          const cat = this.getCategory(catId);
+          if (!cat?.parentId) return null;
+          const ordem = this.divisionFinalOrder(catId);
+          if (!ordem) return null;
+          const players = this.state.categories[catId] || [];
+          const n = ordem.length;
+          const k = Math.min(this.DIVISION_MOVES, Math.floor(n / 2));
+          const ultima = this.DIVISIONS.length;
+          return ordem.map((id, i) => {
+            const p = players.find(x => x.id === id);
+            let to = cat.division, reason = 'manutencao';
+            if (i < k && cat.division > 1) { to = cat.division - 1; reason = 'promocao'; }
+            else if (i >= n - k && cat.division < ultima) { to = cat.division + 1; reason = 'despromocao'; }
+            return { playerId: id, name: p?.name || id, email: (p?.email || '').toLowerCase(), position: i + 1, from: cat.division, to, reason };
+          }).filter(m => m.email);
+        },
+
+        // Grava a divisão da próxima época de todos os jogadores do torneio e marca-o como
+        // aplicado (nunca se aplica duas vezes, salvo se o admin pedir para reaplicar).
+        async applyDivisionMoves(catId, force) {
+          const t = this.getTournament(catId);
+          if (t.divisionsApplied && !force) return false;
+          const cat = this.getCategory(catId);
+          const moves = this.divisionMoves(catId);
+          if (!moves) return false;
+          const agora = new Date().toISOString();
+          if (moves.length) {
+            const { error } = await sb.from('player_divisions').upsert(moves.map(m => ({
+              email: m.email, group_id: cat.parentId, division: m.to, assigned_by: 'auto', updated_at: agora
+            })));
+            if (error) throw error;
+            const { error: hErr } = await sb.from('division_history').insert(moves.map((m, i) => ({
+              id: `dh-${Date.now()}-${i}`, group_id: cat.parentId, email: m.email, player_name: m.name,
+              from_division: m.from, to_division: m.to, reason: m.reason, source_cat_id: catId, created_at: agora
+            })));
+            if (hErr) console.warn('Histórico das divisões não gravado:', hErr);
+          }
+          const obj = { ...t, divisionsApplied: true };
+          await this.saveTournamentToSupabase(catId, obj);
+          this.state.tournaments[catId] = obj;
+          await this.loadDivisions();
+          return true;
+        },
+
+        async reapplyDivisionMoves(catId) {
+          const cat = this.getCategory(catId);
+          if (!confirm(`Voltar a calcular e aplicar as subidas/descidas de ${cat?.name}? (útil se corrigiste um resultado depois de o torneio terminar)`)) return;
+          try { await this.applyDivisionMoves(catId, true); this.render(); }
+          catch (e) { alert('Erro: ' + (e.message || e)); }
+        },
+
+        // Automático: sempre que o admin está na app e um torneio de divisão termina
+        // (último resultado / fase final concluída), aplica-se a subida/descida.
+        scheduleDivisionAutoApply() {
+          if (this._divAutoTimer || this._applyingDivisions) return;
+          this._divAutoTimer = setTimeout(() => { this._divAutoTimer = null; this.autoApplyDivisionMoves(); }, 300);
+        },
+        async autoApplyDivisionMoves() {
+          if (this.currentUser?.role !== 'admin' || !this.divisionsTableReady || this._applyingDivisions) return;
+          const pendentes = [];
+          this.divisionGroups().forEach(g => this.divisionsOf(g.id).forEach(d => {
+            const t = this.getTournament(d.id);
+            if (t.started && !t.divisionsApplied && this.champion(d.id)) pendentes.push(d);
+          }));
+          if (!pendentes.length) return;
+          this._applyingDivisions = true;
+          const feitos = [];
+          try {
+            for (const d of pendentes) {
+              try { if (await this.applyDivisionMoves(d.id)) feitos.push(d.name); }
+              catch (e) { console.error('Subidas/descidas', d.id, e); }
+            }
+          } finally { this._applyingDivisions = false; }
+          if (feitos.length) {
+            if (this.currentTab === 'divisoes') this.render();
+            alert('🎖️ Torneio(s) de divisão terminado(s) — subidas e descidas aplicadas automaticamente:\n\n• ' + feitos.join('\n• ') + '\n\nVê o resultado em 🎖️ Divisões (podes sempre ajustar manualmente).');
+          }
+        },
+
+        // ---------- Separador 🎖️ Divisões (admin) ----------
+        divisionSelectHTML(groupId, email, current) {
+          const e = this.escapeHtml((email || '').replace(/'/g, "\\'"));
+          return `<select onchange="app.setPlayerDivision('${groupId}', '${e}', this.value)" class="text-xs border border-gray-200 rounded-lg px-1.5 py-1 bg-white max-w-[11rem]">
+            <option value="">— Por atribuir —</option>
+            ${this.DIVISIONS.map(d => `<option value="${d.level}" ${Number(current) === d.level ? 'selected' : ''}>${d.icon} ${d.name}</option>`).join('')}
+          </select>`;
+        },
+
+        renderDivisoes() {
+          if (this.currentUser.role !== 'admin') return '';
+          const groups = this.divisionGroups();
+          const candidatos = (this.ALL_CATEGORIES || this.CATEGORIES)
+            .filter(c => c.sport === 'tenis' && !c.parentId && c.active && !this.hasDivisions(c.id));
+          return `
+      <div class="mb-6">
+        <h2 class="text-2xl font-extrabold">Divisões de Ténis</h2>
+        <p class="text-sm text-gray-500">🥇 ATP Masters 1000 › 🥈 ATP Challenger › 🥉 ITF Tennis Tour — torneios independentes, máx. ${this.DIVISION_MAX} jogadores cada.
+          No fim de cada torneio sobem os ${this.DIVISION_MOVES} primeiros e descem os ${this.DIVISION_MOVES} últimos (automático).</p>
+      </div>
+      ${!this.divisionsTableReady ? `
+        <div class="bg-amber-50 border border-amber-200 text-amber-900 rounded-xl p-4 text-sm mb-4">
+          ⚠️ As tabelas das divisões ainda não existem no Supabase. Corre o <strong>migracao_divisoes.sql</strong> no SQL Editor
+          (só acrescenta tabelas e colunas — não altera torneios, jogos nem inscrições existentes).
+        </div>` : ''}
+      ${groups.map(g => this.renderDivisionGroup(g)).join('')}
+      ${candidatos.length ? `
+        <div class="bg-white rounded-2xl shadow-sm border p-5 mt-6">
+          <div class="font-bold mb-1">Ativar divisões ${groups.length ? 'noutro escalão' : 'num escalão de ténis'}</div>
+          <p class="text-xs text-gray-500 mb-3">Cria as 3 divisões dentro do escalão. O torneio que estiver a decorrer nesse escalão continua igual.</p>
+          <div class="flex gap-2 flex-wrap">
+            ${candidatos.map(c => `<button onclick="app.enableDivisions('${c.id}')" class="px-3 py-1.5 btn-admin text-white rounded-lg font-semibold text-sm">${c.icon} ${this.escapeHtml(c.name)}</button>`).join('')}
+          </div>
+        </div>` : ''}
+    `;
+        },
+
+        renderDivisionGroup(g) {
+          const divs = this.divisionsOf(g.id);
+          const tPai = this.getTournament(g.id);
+          const atribuicoes = this.state.playerDivisions[g.id] || {};
+          const porAtribuir = tPai.started ? [] : (this.state.categories[g.id] || []);
+          const prontosAMover = porAtribuir.filter(p => this.getPlayerDivision(g.id, p.email));
+          const nome = e => this.state.accounts[e]?.name || e;
+          const linha = (label, email, extra) => `
+            <div class="flex items-center justify-between gap-2 py-1.5">
+              <div class="min-w-0"><div class="text-sm font-medium truncate">${label}</div>${extra ? `<div class="text-[11px] text-gray-400 truncate">${extra}</div>` : ''}</div>
+              ${this.divisionSelectHTML(g.id, email, this.getPlayerDivision(g.id, email))}
+            </div>`;
+          const contas = Object.values(this.state.accounts).sort((a, b) => (a.name || a.email || '').localeCompare(b.name || b.email || ''));
+          const hist = (this.state.divisionHistory || []).filter(h => h.group_id === g.id).slice(0, 30);
+          const rotuloMov = { promocao: '⬆️ Sobe', despromocao: '⬇️ Desce', manutencao: '➡️ Mantém', admin: '✏️ Admin' };
+          const nomeDiv = l => l ? (this.divisionInfo(l)?.short || l) : '—';
+
+          const cartaoDivisao = d => {
+            const t = this.getTournament(d.id);
+            const inscritos = this.state.categories[d.id] || [];
+            const moves = t.started ? this.divisionMoves(d.id) : null;
+            const estado = !t.started ? '🟡 Aberto' : moves ? (t.divisionsApplied ? '🏁 Terminado • aplicado' : '🏁 Terminado') : '🟢 A decorrer';
+            const inscritosAqui = new Set(inscritos.map(p => (p.email || '').toLowerCase()));
+            const semInscricao = Object.entries(atribuicoes)
+              .filter(([e, v]) => v.division === d.division && !inscritosAqui.has(e));
+            const movimentos = moves ? moves.filter(m => m.reason !== 'manutencao') : [];
+            return `
+          <div class="bg-white rounded-2xl shadow-sm border overflow-hidden flex flex-col">
+            <div class="bg-gradient-to-r ${d.color} p-4 text-white flex justify-between items-start gap-2">
+              <div class="min-w-0">
+                <div class="text-2xl">${d.icon}</div>
+                <div class="font-bold leading-tight">${this.escapeHtml(this.divisionInfo(d.division)?.name || d.name)}</div>
+                <div class="text-[11px] text-white/80">Divisão ${d.division}</div>
+              </div>
+              <div class="text-right text-xs">
+                <div class="text-xl font-extrabold">${inscritos.length}/${this.DIVISION_MAX}</div>
+                <div>${estado}</div>
+              </div>
+            </div>
+            <div class="p-4 flex-1">
+              ${inscritos.length ? `
+                <div class="text-[11px] font-bold text-gray-400 uppercase">Inscritos nesta divisão</div>
+                <div class="divide-y">${inscritos.map(p => t.started
+                  ? `<div class="py-1.5 text-sm">${this.escapeHtml(p.name)}</div>`
+                  : linha(this.escapeHtml(p.name), p.email)).join('')}</div>` : '<p class="text-xs text-gray-400">Ainda sem inscritos.</p>'}
+              ${semInscricao.length ? `
+                <div class="text-[11px] font-bold text-gray-400 uppercase mt-3">Atribuídos (ainda não inscritos nesta divisão)</div>
+                <div class="divide-y">${semInscricao.map(([e]) => linha(this.escapeHtml(nome(e)), e, this.escapeHtml(e))).join('')}</div>` : ''}
+              ${inscritos.length > this.DIVISION_MAX ? `<p class="text-xs text-red-600 font-semibold mt-2">⚠️ Mais de ${this.DIVISION_MAX} jogadores.</p>` : ''}
+              ${moves ? `
+                <div class="mt-3 pt-3 border-t">
+                  <div class="text-[11px] font-bold text-gray-400 uppercase mb-1">Próxima época</div>
+                  ${movimentos.length ? movimentos.map(m => `<div class="text-xs">${m.position}º ${this.escapeHtml(m.name)} — ${m.reason === 'promocao' ? '⬆️' : '⬇️'} ${nomeDiv(m.to)}</div>`).join('') : '<div class="text-xs text-gray-500">Sem subidas nem descidas.</div>'}
+                  ${t.divisionsApplied
+                    ? `<button onclick="app.reapplyDivisionMoves('${d.id}')" class="mt-2 text-xs text-gray-500 underline">↻ Recalcular e reaplicar</button>`
+                    : `<div class="text-xs text-amber-700 mt-1">A aplicar automaticamente…</div>`}
+                </div>` : ''}
+            </div>
+            <div class="px-4 pb-4 flex gap-2 flex-wrap">
+              <button onclick="app.currentCategory='${d.id}'; app.switchTab('calendario')" class="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg font-semibold">📅 Torneio</button>
+              <button onclick="app.currentCategory='${d.id}'; app.switchTab('classificacao')" class="text-xs px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg font-semibold">📋 Classificação</button>
+            </div>
+          </div>`;
+          };
+
+          return `
+      <div class="mb-8">
+        <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
+          <h3 class="text-xl font-bold">${g.icon} ${this.escapeHtml(g.name)}</h3>
+          <span class="text-xs text-gray-500">${Object.keys(atribuicoes).length} atleta(s) com divisão atribuída</span>
+        </div>
+        ${tPai.started ? `
+          <div class="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900 mb-3">
+            O torneio atual de <strong>${this.escapeHtml(g.name)}</strong> está a decorrer e não é alterado pelas divisões.
+            Podes já atribuir as divisões aos atletas — entram nelas quando se inscreverem (ou quando os inscreveres) nos torneios de divisão.
+          </div>` : ''}
+        <div class="bg-white rounded-2xl shadow-sm border p-4 mb-4">
+          <div class="flex items-center justify-between flex-wrap gap-2">
+            <div class="font-bold text-sm">📥 Por atribuir <span class="text-gray-400 font-semibold">(inscritos em ${this.escapeHtml(g.name)})</span></div>
+            ${prontosAMover.length ? `<button onclick="app.syncGroupDivisions('${g.id}')" class="text-xs px-3 py-1.5 btn-admin text-white rounded-lg font-semibold">➡️ Colocar ${prontosAMover.length} nas divisões atribuídas</button>` : ''}
+          </div>
+          ${porAtribuir.length
+            ? `<div class="divide-y mt-2">${porAtribuir.map(p => linha(this.escapeHtml(p.name), p.email, this.escapeHtml(p.email || ''))).join('')}</div>`
+            : `<p class="text-xs text-gray-400 mt-2">${tPai.started ? 'Sem inscrições em aberto (o torneio atual está a decorrer).' : 'Ninguém à espera de divisão.'}</p>`}
+          <div class="mt-3 pt-3 border-t flex gap-2 flex-wrap items-center">
+            <span class="text-xs font-semibold text-gray-600">Atribuir a uma conta:</span>
+            <select id="divAddEmail-${g.id}" class="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white max-w-[16rem]">
+              <option value="">Escolhe o atleta…</option>
+              ${contas.map(a => `<option value="${this.escapeHtml(a.email || '')}">${this.escapeHtml(a.name || a.email)}${a.name ? ' · ' + this.escapeHtml(a.email || '') : ''}${atribuicoes[(a.email || '').toLowerCase()] ? ' — ' + nomeDiv(atribuicoes[(a.email || '').toLowerCase()].division) : ''}</option>`).join('')}
+            </select>
+            <select id="divAddLevel-${g.id}" class="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white">
+              ${this.DIVISIONS.map(d => `<option value="${d.level}">${d.icon} ${d.name}</option>`).join('')}
+            </select>
+            <button onclick="app.addAccountToDivision('${g.id}')" class="text-xs px-3 py-1.5 btn-admin text-white rounded-lg font-semibold">Atribuir</button>
+          </div>
+        </div>
+        <div class="grid md:grid-cols-3 gap-4">${divs.map(cartaoDivisao).join('')}</div>
+        ${hist.length ? `
+          <details class="bg-white rounded-2xl shadow-sm border p-4 mt-4">
+            <summary class="font-bold text-sm cursor-pointer">🕘 Histórico de subidas e descidas (${hist.length})</summary>
+            <div class="divide-y mt-2">${hist.map(h => `
+              <div class="py-1.5 text-xs flex justify-between gap-2">
+                <span class="truncate">${this.escapeHtml(h.player_name || h.email)} — ${rotuloMov[h.reason] || h.reason}: ${nomeDiv(h.from_division)} → ${nomeDiv(h.to_division)}</span>
+                <span class="text-gray-400 whitespace-nowrap">${new Date(h.created_at).toLocaleDateString('pt-PT')}</span>
+              </div>`).join('')}</div>
+          </details>` : ''}
+      </div>`;
         },
 
         // ============================================
@@ -1581,7 +2057,8 @@
               finalSeeds: t.final_seeds || null,
               finalStarted: !!t.final_started,
               plannedJornadas: t.planned_jornadas || null,
-              capacity: t.capacity || null
+              capacity: t.capacity || null,
+              divisionsApplied: !!t.divisions_applied
             };
           });
 
@@ -1593,6 +2070,10 @@
               email: a.email, name: a.name, nif: a.nif, address: a.address, phone: a.phone
             };
           });
+
+          // Divisões atribuídas e histórico de subidas/descidas (tabelas da migração das
+          // divisões). Se ainda não existirem, a app funciona como antes.
+          await this.loadDivisions();
 
           // Carregar playoffs
           const { data: playoffs } = await sb.from('playoffs').select('*');
@@ -2114,6 +2595,7 @@
             tabs.push({ id: 'dashboard', label: '📊 Dashboard' });
             tabs.push({ id: 'inscricoes', label: '📝 Inscrições' });
             tabs.push({ id: 'escaloes', label: '🏷️ Escalões' });
+            tabs.push({ id: 'divisoes', label: '🎖️ Divisões' });
           }
           tabs.push({ id: 'categorias', label: '🏆 Categorias' });
           tabs.push({ id: 'calendario', label: '📅 Calendário' });
@@ -2148,6 +2630,7 @@
             inscricoes: () => this.renderInscricoes(),
             settings: () => this.renderSettings(),
             escaloes: () => this.currentUser.role === 'admin' ? this.renderEscaloes() : '',
+            divisoes: () => this.currentUser.role === 'admin' ? this.renderDivisoes() : '',
             categorias: () => this.renderCategorias(),
             calendario: () => this.renderCalendario(),
             classificacao: () => this.renderClassificacao(),
@@ -2159,6 +2642,8 @@
           document.body.classList.toggle('chat-open', this.currentTab === 'chat' && this.chatMobileView === 'chat');
           content.innerHTML = (renderers[this.currentTab] || (() => '<div>Em construção</div>'))();
           this.updateChatBadge();
+          // Divisões: se um torneio de divisão acabou de terminar, aplica as subidas/descidas.
+          if (this.currentUser?.role === 'admin') this.scheduleDivisionAutoApply();
         },
 
         // ============================================
@@ -2664,6 +3149,7 @@
         ${info.slice.map(a => {
             const parts = partsByEmail[(a.email || '').toLowerCase()] || [];
             const partsLabel = parts.length ? parts.map(c => `${c.icon} ${c.name}`).join(', ') : 'Sem inscrição ativa';
+            const divs = this.divisionsOfEmail(a.email);
             const emailAttr = (a.email || '').replace(/'/g, "\\'");
             return `
               <div class="p-4 flex items-center gap-3">
@@ -2672,6 +3158,7 @@
                   <div class="font-bold text-sm">${this.escapeHtml(a.name || '(sem nome)')}</div>
                   <div class="text-xs text-gray-500 truncate">${this.escapeHtml(a.email || 'sem email')}</div>
                   <div class="text-xs text-gray-400 truncate">${this.escapeHtml(partsLabel)}</div>
+                  ${divs.length ? `<div class="text-xs text-amber-700 truncate">🎖️ ${divs.map(d => `${this.escapeHtml(this.divisionInfo(d.level)?.name || d.level)} (${this.escapeHtml(d.group.name)})`).join(', ')}</div>` : ''}
                 </div>
                 <div class="flex items-center gap-3 flex-shrink-0">
                   <button onclick="app.openEditAccountModal('${emailAttr}')" class="text-emerald-600 text-xs font-semibold whitespace-nowrap">✏️ Editar</button>
@@ -3436,7 +3923,8 @@
             finalSeeds: t.finalSeeds || null,
             finalStarted: !!t.finalStarted,
             plannedJornadas: t.plannedJornadas || null,
-            capacity: t.capacity || null
+            capacity: t.capacity || null,
+            divisionsApplied: !!t.divisionsApplied
           };
         },
 
@@ -3943,6 +4431,7 @@
           if (capacityEl) {
             if (!capacity || capacity < 2) return fail('A lotação tem de ser pelo menos 2.');
             if (capacity < inscritos) return fail(`A lotação não pode ser inferior aos ${inscritos} inscritos que já existem nesta categoria.`);
+            if (this.isDivisionCat(catId) && capacity > this.DIVISION_MAX) return fail(`Cada divisão tem no máximo ${this.DIVISION_MAX} jogadores.`);
           }
           const obj = { ...existing, startDate: start, endDate: end, started: existing?.started || false, capacity };
           try {
@@ -3975,6 +4464,9 @@
             final_started: !!obj.finalStarted,
             planned_jornadas: obj.plannedJornadas || null,
             capacity: obj.capacity || null,
+            // Só se envia quando já foi marcado (coluna da migração das divisões), para
+            // não partir a gravação de torneios antes de a migração ser corrida.
+            ...(obj.divisionsApplied ? { divisions_applied: true } : {}),
             updated_at: new Date().toISOString()
           }]);
           if (error) throw error;
@@ -5748,7 +6240,9 @@
 
         renderCategoryOptions() {
           const sport = document.querySelector('input[name="inscriptionSport"]:checked')?.value || 'tenis';
-          const filtered = this.CATEGORIES.filter(c => c.sport === sport);
+          // As divisões não se escolhem aqui: o atleta inscreve-se no escalão e a app
+          // encaminha-o para a divisão que o admin lhe atribuiu.
+          const filtered = this.CATEGORIES.filter(c => c.sport === sport && !c.parentId);
           // Ténis: escolha única (radio). Padel: uma ou várias categorias (checkbox).
           const inputType = sport === 'padel' ? 'checkbox' : 'radio';
           return filtered.map(cat => {
@@ -5868,10 +6362,15 @@
 
             // Inscrever no torneio ABERTO de cada categoria escolhida.
             for (let i = 0; i < selectedCats.length; i++) {
-              const catId = selectedCats[i];
+              // Escalão com divisões: vai para a divisão atribuída ao atleta (se houver).
+              const catId = isPadel ? selectedCats[i] : this.divisionTargetFor(selectedCats[i], p1.email);
               const cat = this.CATEGORIES.find(c => c.id === catId);
+              if (catId !== selectedCats[i]) catNames[i] = cat?.name || catId;
               // Só se aceita inscrição em torneios abertos (não iniciados).
-              if (this.getTournament(catId)?.started) { closedCats.push(cat?.name || catId); continue; }
+              if (this.getTournament(catId)?.started) {
+                closedCats.push((cat?.name || catId) + (this.hasDivisions(catId) ? ' (ainda sem divisão atribuída — fala com a organização)' : ''));
+                continue;
+              }
               const alreadyThere = (this.state.categories[catId] || []).some(pl => (pl.email || '').toLowerCase() === p1.email.toLowerCase());
               if (alreadyThere) continue;
               if (this.getVacancies(catId) <= 0) warnFull.push(cat?.name || catId);
@@ -6569,7 +7068,20 @@
 
           const info = document.getElementById('quickInfo');
           const btn = document.getElementById('quickSubmit');
-          if (t.started) {
+          const comDivisoes = this.hasDivisions(catId);
+          const notaDivisoes = comDivisoes
+            ? `<div class="mt-1">🎖️ Este escalão tem divisões: o atleta entra diretamente na divisão que lhe estiver atribuída${t.started ? '' : ' (sem divisão, fica em "por atribuir")'}.</div>`
+            : (cat.parentId ? `<div class="mt-1">🎖️ Divisão — máximo ${this.DIVISION_MAX} jogadores. A divisão fica atribuída ao atleta.</div>` : '');
+          if (t.started && comDivisoes) {
+            info.innerHTML = `
+        <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900">
+          O torneio atual de <strong>${this.escapeHtml(cat.name)}</strong> já foi sorteado (não é alterado).
+          ${notaDivisoes}
+          <div class="mt-1">Se o atleta ainda não tiver divisão, atribui-a primeiro em 🎖️ Divisões ou escolhe a divisão na lista acima.</div>
+        </div>`;
+            btn.disabled = false;
+            btn.classList.remove('opacity-40', 'cursor-not-allowed');
+          } else if (t.started) {
             info.innerHTML = `
         <div class="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-800">
           O torneio de <strong>${this.escapeHtml(cat.name)}</strong> já foi sorteado, por isso as inscrições estão fechadas.
@@ -6583,6 +7095,7 @@
           ${duplas ? 'Categoria de <strong>duplas</strong> — são precisos os dois nomes.' : 'Categoria de <strong>singulares</strong>.'}
           ${inscritos}/${this.getCapacity(catId)} inscritos${vagas ? ` • ${vagas} vaga(s)` : ' • <strong>sem vagas</strong> (podes inscrever à mesma)'}.
           O email e a password de acesso são gerados automaticamente e mostrados no fim.
+          ${notaDivisoes}
         </div>`;
             btn.disabled = false;
             btn.classList.remove('opacity-40', 'cursor-not-allowed');
@@ -6592,8 +7105,8 @@
         // ---------- Passo 2: inscrever ----------
         async submitQuickInscription() {
           if (this.currentUser?.role !== 'admin') return;
-          const catId = document.getElementById('quickCat').value;
-          const cat = this.CATEGORIES.find(c => c.id === catId);
+          let catId = document.getElementById('quickCat').value;
+          let cat = this.CATEGORIES.find(c => c.id === catId);
           const duplas = this.categoryIsDoubles(catId);
           const errorEl = document.getElementById('quickError');
           const fail = msg => { errorEl.textContent = msg; errorEl.classList.remove('hidden'); };
@@ -6604,7 +7117,10 @@
           if (!n1) return fail(duplas ? 'Escreve o nome do jogador 1.' : 'Escreve o nome do atleta.');
           if (duplas && !n2) return fail('Nas duplas são precisos os dois nomes.');
           if (duplas && this.normalizeSearch(n1) === this.normalizeSearch(n2)) return fail('Os dois jogadores não podem ser a mesma pessoa.');
-          if (this.getTournament(catId).started) return fail('O torneio desta categoria já foi sorteado. Reabre-o em Calendário para inscrever mais atletas.');
+          if (this.getTournament(catId).started && !this.hasDivisions(catId)) return fail('O torneio desta categoria já foi sorteado. Reabre-o em Calendário para inscrever mais atletas.');
+          if (cat.parentId && (this.state.categories[catId] || []).length >= this.DIVISION_MAX) {
+            return fail(`${cat.name} já tem ${this.DIVISION_MAX} jogadores (máximo por divisão).`);
+          }
           // Já inscrito nesta categoria?
           const jaLa = (this.state.categories[catId] || []).some(pl =>
             this.normalizeSearch(pl.name) === this.normalizeSearch(duplas ? `${n1} & ${n2}` : n1));
@@ -6612,6 +7128,16 @@
 
           const contas = [this.resolveAthleteAccount(n1)];
           if (duplas) contas.push(this.resolveAthleteAccount(n2, [contas[0].email]));
+          // Escalão com divisões: se a conta já tiver divisão atribuída, entra diretamente nela.
+          const escolhida = catId;
+          catId = duplas ? catId : this.divisionTargetFor(catId, contas[0].email);
+          cat = this.CATEGORIES.find(c => c.id === catId);
+          if (this.getTournament(catId).started) {
+            return fail(`O torneio de ${cat.name} já foi sorteado${catId === escolhida && this.hasDivisions(catId) ? ' — atribui primeiro uma divisão a este atleta em 🎖️ Divisões, ou escolhe diretamente a divisão' : ''}.`);
+          }
+          if (catId !== escolhida && (this.state.categories[catId] || []).some(pl => this.normalizeSearch(pl.name) === this.normalizeSearch(n1))) {
+            return fail(`Este atleta já está inscrito em ${cat.name}.`);
+          }
 
           this.setModalContent(this.modalBusy('A inscrever…', 'A criar a inscrição e os acessos.'));
           try {
@@ -6631,6 +7157,14 @@
             await this.addPlayerToSupabase(novoPlayer, catId);
             for (const c of contas) {
               if (c.nova) await this.createAccount(c.email, { name: c.name, nif: '', address: '', phone: '' }, c.password);
+            }
+            // Inscrever diretamente numa divisão conta como atribuição dessa divisão pelo admin.
+            if (cat.parentId && this.divisionsTableReady && this.getPlayerDivision(cat.parentId, contas[0].email) !== cat.division) {
+              const { error: dErr } = await sb.from('player_divisions').upsert([{
+                email: contas[0].email.toLowerCase(), group_id: cat.parentId, division: cat.division,
+                assigned_by: 'admin', updated_at: new Date().toISOString()
+              }]);
+              if (dErr) console.warn('Divisão não registada:', dErr); else await this.loadDivisions();
             }
             this.state.categories[catId] = [...(this.state.categories[catId] || []), novoPlayer];
             this.render();
